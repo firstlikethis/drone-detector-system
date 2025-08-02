@@ -55,7 +55,7 @@ app.add_middleware(
 # Include API routes
 app.include_router(drones.router, prefix="/api", tags=["drones"])
 app.include_router(system.router, prefix="/api", tags=["system"])
-app.include_router(countermeasures.router, prefix="/api", tags=["countermeasures"])
+app.include_router(countermeasures.router, prefix="/api/countermeasures", tags=["countermeasures"])
 
 @app.get("/")
 async def root():
