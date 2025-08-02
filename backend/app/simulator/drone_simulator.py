@@ -281,18 +281,6 @@ class DroneSimulator:
             drone = self._create_random_drone()
             self.drones[drone.id] = drone
         
-    async def run_simulation(self, connection_manager: ConnectionManager):
-        """
-        Main simulation loop - runs continuously to update drone positions
-        and broadcast updates to connected clients
-        """
-        logger.info(f"Starting drone simulator with {self.num_drones} drones")
-        
-        # Initialize drones
-        for _ in range(self.num_drones):
-            drone = self._create_random_drone()
-            self.drones[drone.id] = drone
-        
         try:
             while True:
                 # Update all drone positions

@@ -4,6 +4,7 @@ RF Jamming module for drone countermeasures
 import logging
 import threading
 import time
+import random  # ย้ายมาไว้ด้านบน
 from typing import Dict, List, Optional, Tuple, Union
 from enum import Enum
 
@@ -447,6 +448,3 @@ class DroneJammer:
                 updated_drone["threat_level"] = "high"  # Increase threat level
         
         return updated_drone
-
-# Add code to import the random module at the top of the file
-import random
