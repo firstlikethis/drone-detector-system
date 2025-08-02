@@ -2,7 +2,7 @@
 Geographic utilities for the drone simulator
 """
 import math
-from typing import Dict, Any, Tuple, List, Optional
+from typing import Dict, Any, Tuple, List, Optional, Union
 
 from app.core.models import GeoPoint
 
@@ -220,7 +220,7 @@ def get_random_point_in_border(
     )
 
 def calculate_new_position(
-    start: GeoPoint,
+    start: Union[GeoPoint, Dict[str, Any]],
     heading: float,
     speed: float,
     time_delta: float
@@ -229,7 +229,7 @@ def calculate_new_position(
     Calculate a new position based on current position, heading, speed, and time
     
     Args:
-        start: Starting position
+        start: Starting position (GeoPoint or dict with latitude, longitude, altitude keys)
         heading: Heading in degrees (0-360, where 0 is North)
         speed: Speed in meters per second
         time_delta: Time delta in seconds
@@ -237,6 +237,33 @@ def calculate_new_position(
     Returns:
         New GeoPoint
     """
+    # ตรวจสอบว่า start เป็น dict หรือ GeoPoint
+    if isinstance(start, dict):
+        # ถ้าเป็น dict ให้แปลงเป็น GeoPoint
+        start_lat = start.get("latitude")
+        start_lon = start.get("longitude")
+        start_alt = start.get("altitude")
+        
+        # ถ้า key ไม่ถูกต้อง ให้ลองหาในรูปแบบอื่น
+        if start_lat is None and "lat" in start:
+            start_lat = start["lat"]
+        if start_lon is None and "lon" in start:
+            start_lon = start["lon"]
+        if start_lon is None and "longitude" in start:
+            start_lon = start["longitude"]
+        if start_alt is None and "alt" in start:
+            start_alt = start["alt"]
+        
+        # สร้าง GeoPoint จาก dict
+        start_point = GeoPoint(
+            latitude=start_lat,
+            longitude=start_lon,
+            altitude=start_alt
+        )
+    else:
+        # ถ้าเป็น GeoPoint อยู่แล้ว ใช้ได้เลย
+        start_point = start
+    
     # Convert heading to radians (0° is North, 90° is East)
     heading_rad = math.radians(90 - heading)
     
@@ -246,7 +273,7 @@ def calculate_new_position(
     # Convert distance to degrees (approximately)
     # 1 degree latitude = 111 km (roughly)
     # 1 degree longitude = 111 km * cos(latitude) (varies with latitude)
-    lat_rad = math.radians(start.latitude)
+    lat_rad = math.radians(start_point.latitude)
     lon_km_per_degree = 111.32 * math.cos(lat_rad)
     
     # Calculate offsets
@@ -254,12 +281,12 @@ def calculate_new_position(
     lon_offset = (distance_km * math.cos(heading_rad)) / lon_km_per_degree
     
     # Calculate new position
-    new_lat = start.latitude + lat_offset
-    new_lon = start.longitude + lon_offset
+    new_lat = start_point.latitude + lat_offset
+    new_lon = start_point.longitude + lon_offset
     
     # Keep altitude the same
     return GeoPoint(
         latitude=new_lat,
         longitude=new_lon,
-        altitude=start.altitude
+        altitude=start_point.altitude
     )
