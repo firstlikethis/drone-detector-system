@@ -18,7 +18,9 @@ class DroneWebSocketClient {
       drones: [],
       alerts: [],
       connection: [],
-      error: []
+      error: [],
+      countermeasures_status: [], // Add handler for countermeasures status
+      system_status: [] // Add handler for system status
     };
   }
 
@@ -112,6 +114,28 @@ class DroneWebSocketClient {
   }
 
   /**
+   * Register a handler for countermeasures status updates
+   * @param {Function} handler - Handler function
+   */
+  onCountermeasuresStatus(handler) {
+    this.handlers.countermeasures_status.push(handler);
+    return () => {
+      this.handlers.countermeasures_status = this.handlers.countermeasures_status.filter(h => h !== handler);
+    };
+  }
+
+  /**
+   * Register a handler for system status updates
+   * @param {Function} handler - Handler function
+   */
+  onSystemStatus(handler) {
+    this.handlers.system_status.push(handler);
+    return () => {
+      this.handlers.system_status = this.handlers.system_status.filter(h => h !== handler);
+    };
+  }
+
+  /**
    * Register a handler for connection status changes
    * @param {Function} handler - Handler function
    */
@@ -188,8 +212,10 @@ class DroneWebSocketClient {
           this._notifyHandlers('alerts', message.data);
           break;
         case 'system_status':
-          // Handle system status updates if needed
-          console.log('System status update received:', message.data);
+          this._notifyHandlers('system_status', message.data);
+          break;
+        case 'countermeasures_status':
+          this._notifyHandlers('countermeasures_status', message.data);
           break;
         default:
           console.log('Unknown message type:', message.type);

@@ -25,6 +25,7 @@ export const DroneProvider = ({ children, apiBaseUrl = 'http://localhost:8000', 
   const [connectionStatus, setConnectionStatus] = useState(false);
   const [border, setBorder] = useState(DEFAULT_BORDER);
   const [systemStatus, setSystemStatus] = useState(null);
+  const [countermeasuresStatus, setCountermeasuresStatus] = useState(null); // New state for countermeasures
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -82,6 +83,21 @@ export const DroneProvider = ({ children, apiBaseUrl = 'http://localhost:8000', 
       }
     });
 
+    // Handle system status updates
+    const systemStatusUnsubscribe = wsClient.onSystemStatus((statusData) => {
+      setSystemStatus(statusData);
+      
+      // Update border if available
+      if (statusData && statusData.simulator && statusData.simulator.border) {
+        setBorder(statusData.simulator.border);
+      }
+    });
+
+    // Handle countermeasures status updates
+    const countermeasuresStatusUnsubscribe = wsClient.onCountermeasuresStatus((statusData) => {
+      setCountermeasuresStatus(statusData);
+    });
+
     // Handle errors
     const errorUnsubscribe = wsClient.onError((error) => {
       console.error('WebSocket error:', error);
@@ -96,6 +112,8 @@ export const DroneProvider = ({ children, apiBaseUrl = 'http://localhost:8000', 
       droneUnsubscribe();
       alertUnsubscribe();
       connectionUnsubscribe();
+      systemStatusUnsubscribe();
+      countermeasuresStatusUnsubscribe();
       errorUnsubscribe();
       wsClient.disconnect();
     };
@@ -177,6 +195,7 @@ export const DroneProvider = ({ children, apiBaseUrl = 'http://localhost:8000', 
     selectedDroneId,
     connectionStatus,
     systemStatus,
+    countermeasuresStatus, // Add countermeasures status to context
     error,
     loading,
     selectDrone,

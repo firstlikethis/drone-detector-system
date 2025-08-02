@@ -16,13 +16,11 @@ import {
 } from '../api/countermeasureApi';
 
 const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
-  const { selectedDroneId, drones, refreshData } = useDroneContext();
+  const { selectedDroneId, drones, refreshData, countermeasuresStatus } = useDroneContext();
   
-  // Selected drone
   const selectedDrone = drones.find(d => d.id === selectedDroneId);
   
-  // State
-  const [activeTab, setActiveTab] = useState('jam'); // 'jam', 'takeover', 'physical'
+  const [activeTab, setActiveTab] = useState('jam'); 
   const [jammers, setJammers] = useState([]);
   const [takeoverStatus, setTakeoverStatus] = useState({});
   const [equipment, setEquipment] = useState({});
@@ -30,7 +28,6 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
   const [message, setMessage] = useState(null);
   const [loading, setLoading] = useState(false);
   
-  // Form state
   const [jamPower, setJamPower] = useState(70);
   const [jamDuration, setJamDuration] = useState(30);
   const [jamGps, setJamGps] = useState(false);
@@ -38,24 +35,36 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
   const [takeoverCommand, setTakeoverCommand] = useState('land');
   const [captureMethod, setCaptureMethod] = useState('net_gun');
   
-  // Fetch status on mount and when tab changes
+  useEffect(() => {
+    if (countermeasuresStatus) {
+      if (countermeasuresStatus.jammers) {
+        setJammers(countermeasuresStatus.jammers.jammers || {});
+      }
+      
+      if (countermeasuresStatus.takeovers) {
+        setTakeoverStatus(countermeasuresStatus.takeovers);
+      }
+      
+      if (countermeasuresStatus.physical) {
+        setEquipment(countermeasuresStatus.physical.equipment || {});
+      }
+    }
+  }, [countermeasuresStatus]);
+  
   useEffect(() => {
     fetchStatusData();
     
-    // Refresh every 5 seconds
     const interval = setInterval(fetchStatusData, 5000);
     
     return () => clearInterval(interval);
   }, [activeTab, apiBaseUrl]);
   
-  // Fetch vulnerabilities when drone selected
   useEffect(() => {
     if (selectedDroneId && activeTab === 'takeover') {
       fetchVulnerabilities();
     }
   }, [selectedDroneId, activeTab]);
   
-  // Fetch status data based on active tab
   const fetchStatusData = async () => {
     try {
       if (activeTab === 'jam') {
@@ -74,7 +83,6 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
     }
   };
   
-  // Fetch vulnerabilities for selected drone
   const fetchVulnerabilities = async () => {
     if (!selectedDroneId) return;
     
@@ -92,20 +100,17 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
     }
   };
   
-  // Show message with timeout
   const showMessage = (msg, isError = false) => {
     setMessage({
       text: msg,
       isError
     });
     
-    // Clear message after 3 seconds
     setTimeout(() => {
       setMessage(null);
     }, 3000);
   };
   
-  // Handle jamming drone
   const handleJamDrone = async () => {
     if (!selectedDroneId) {
       showMessage('Please select a drone first', true);
@@ -138,7 +143,6 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
     }
   };
   
-  // Handle deactivating a jammer
   const handleDeactivateJammer = async (jammerId) => {
     setLoading(true);
     
@@ -160,7 +164,6 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
     }
   };
   
-  // Handle taking over drone
   const handleTakeoverDrone = async () => {
     if (!selectedDroneId) {
       showMessage('Please select a drone first', true);
@@ -179,7 +182,7 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
         jamDuration
       );
       
-      if (result.status === 'success') {
+      if (result.status === 'active') {
         showMessage(`Taking over drone ${selectedDroneId}`);
         fetchStatusData();
         refreshData();
@@ -233,7 +236,7 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
     try {
       const result = await stopTakeover(apiBaseUrl, selectedDroneId);
       
-      if (result.status === 'success') {
+      if (result.status === 'success' || result.status === 'stopped') {
         showMessage(`Takeover stopped for drone ${selectedDroneId}`);
         fetchStatusData();
         refreshData();
@@ -265,7 +268,7 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
         {}  // parameters
       );
       
-      if (result.status === 'success') {
+      if (result.status === 'success' || result.status === 'deploying') {
         showMessage(`Deploying ${captureMethod} to capture drone ${selectedDroneId}`);
         fetchStatusData();
         refreshData();

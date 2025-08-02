@@ -5,6 +5,7 @@ import DroneList from './components/DroneList';
 import AlertPanel from './components/AlertPanel';
 import ControlPanel from './components/ControlPanel';
 import RadarDisplay from './components/RadarDisplay';
+import CountermeasurePanel from './components/CountermeasurePanel'; // Import CountermeasurePanel
 
 // Configuration
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -14,6 +15,7 @@ function App() {
   const [layout, setLayout] = useState('default'); // 'default', 'map-focus', 'data-focus'
   const [followSelected, setFollowSelected] = useState(false);
   const [showRadar, setShowRadar] = useState(false); // Toggle for radar display
+  const [showCountermeasures, setShowCountermeasures] = useState(false); // Toggle for countermeasures panel
 
   // Handle layout changes
   const toggleLayout = (newLayout) => {
@@ -98,10 +100,23 @@ function App() {
               </button>
               <button 
                 className={`px-3 py-1 rounded text-sm ${showRadar ? 'bg-purple-600' : 'bg-gray-600 hover:bg-gray-500'}`}
-                onClick={() => setShowRadar(!showRadar)}
+                onClick={() => {
+                  setShowRadar(!showRadar);
+                  if (showCountermeasures) setShowCountermeasures(false);
+                }}
                 title="Toggle radar display"
               >
                 {showRadar ? 'Hide Radar' : 'Show Radar'}
+              </button>
+              <button 
+                className={`px-3 py-1 rounded text-sm ${showCountermeasures ? 'bg-red-600' : 'bg-gray-600 hover:bg-gray-500'}`}
+                onClick={() => {
+                  setShowCountermeasures(!showCountermeasures);
+                  if (showRadar) setShowRadar(false);
+                }}
+                title="Toggle countermeasures panel"
+              >
+                {showCountermeasures ? 'Hide Countermeasures' : 'Countermeasures'}
               </button>
             </div>
           </div>
@@ -110,9 +125,11 @@ function App() {
         {/* Main Content */}
         <main className="container mx-auto px-4 py-6 flex-grow">
           <div className="grid grid-cols-12 gap-4 h-[calc(100vh-8rem)]">
-            {/* Map/Radar Panel */}
+            {/* Map/Radar/Countermeasures Panel */}
             <div className={`${layoutClasses.map} bg-white rounded-lg shadow overflow-hidden`}>
-              {showRadar ? <RadarDisplay /> : <DroneMap followSelected={followSelected} />}
+              {showRadar ? <RadarDisplay /> : 
+               showCountermeasures ? <CountermeasurePanel apiBaseUrl={API_BASE_URL} /> :
+               <DroneMap followSelected={followSelected} />}
             </div>
             
             {/* Drone List Panel */}
