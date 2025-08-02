@@ -5,7 +5,7 @@ from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, status, Body
 from pydantic import BaseModel, Field
 
-from app.main import drone_simulator  # Import the global simulator instance
+from app.core.globals import drone_simulator
 
 router = APIRouter()
 

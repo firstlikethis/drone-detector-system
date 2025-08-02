@@ -5,14 +5,11 @@ import json
 import logging
 from typing import List, Dict, Any
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from app.core.models import ConnectionManager
+from fastapi import WebSocket, WebSocketDisconnect
+from app.core.globals import connection_manager
 
 # Configure logging
 logger = logging.getLogger(__name__)
-
-# Global connection manager instance
-connection_manager = ConnectionManager()
 
 async def register_websocket(websocket: WebSocket):
     """

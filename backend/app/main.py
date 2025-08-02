@@ -9,8 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.api.routes import drones, system
-from app.simulator.drone_simulator import DroneSimulator
-from app.core.models import ConnectionManager
+from app.core.globals import connection_manager, drone_simulator
 
 # Configure logging
 logging.basicConfig(
@@ -19,17 +18,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Create connection manager for WebSockets
-manager = ConnectionManager()
-
-# Global simulator instance
-drone_simulator = DroneSimulator()
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Start the drone simulator background task
     logger.info("Starting drone simulator...")
-    simulator_task = asyncio.create_task(drone_simulator.run_simulation(manager))
+    simulator_task = asyncio.create_task(drone_simulator.run_simulation(connection_manager))
     
     yield  # Run application
     
@@ -74,7 +67,7 @@ async def root():
 @app.websocket("/ws/drones")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time drone data streaming"""
-    await manager.connect(websocket)
+    await connection_manager.connect(websocket)
     try:
         while True:
             # Wait for any messages from client
@@ -82,7 +75,7 @@ async def websocket_endpoint(websocket: WebSocket):
             data = await websocket.receive_text()
             logger.debug(f"Received message: {data}")
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        connection_manager.disconnect(websocket)
         logger.info("Client disconnected from WebSocket")
 
 if __name__ == "__main__":

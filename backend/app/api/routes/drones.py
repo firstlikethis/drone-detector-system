@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, Depends, status
 from datetime import datetime, timedelta
 
 from app.core.models import Drone, Alert, ThreatLevel, DroneType
-from app.main import drone_simulator  # Import the global simulator instance
+from app.core.globals import drone_simulator
 
 router = APIRouter()
 

@@ -19,26 +19,24 @@ from app.core.models import (
     Alert,
     ConnectionManager
 )
+from app.services.drone_service import DroneService
+from app.simulator.geo_utils import (
+    calculate_distance,
+    is_point_in_border,
+    calculate_new_position,
+    get_random_point_in_border
+)
+from app.config import settings
 
 logger = logging.getLogger(__name__)
-
-# Configuration for the simulator
-# Default border area (customize for your needs)
-DEFAULT_BORDER = {
-    # Thailand-Myanmar border area example (approximate)
-    "center": {"latitude": 16.7769, "longitude": 98.9761},  # Mae Sot area
-    "width": 0.1,  # Degrees longitude (~10km)
-    "height": 0.1,  # Degrees latitude (~10km)
-    "rotation": 0  # Degrees (clockwise from north)
-}
 
 class DroneSimulator:
     """Generates simulated drone activity near border areas"""
     
     def __init__(self, 
                  border: Dict[str, Any] = None, 
-                 num_drones: int = 5,
-                 update_interval: float = 1.0):
+                 num_drones: int = None,
+                 update_interval: float = None):
         """
         Initialize the drone simulator
         
@@ -47,9 +45,9 @@ class DroneSimulator:
             num_drones: Number of drones to simulate
             update_interval: Time between updates in seconds
         """
-        self.border = border or DEFAULT_BORDER
-        self.num_drones = num_drones
-        self.update_interval = update_interval
+        self.border = border or settings.default_border
+        self.num_drones = num_drones or settings.SIM_DEFAULT_DRONES
+        self.update_interval = update_interval or settings.SIM_UPDATE_INTERVAL
         self.drones: Dict[str, Drone] = {}
         self.alerts: List[Alert] = []
         
@@ -75,54 +73,15 @@ class DroneSimulator:
             border_distance_factor: Controls how close to the border (0-1)
                                     0 = on border, 1 = anywhere in area
         """
-        # Get border parameters
-        center = self.border["center"]
-        width = self.border["width"]
-        height = self.border["height"]
-        
-        # Random offset from center (biased toward border)
-        x_offset = (random.random() * 2 - 1) * width / 2
-        y_offset = (random.random() * 2 - 1) * height / 2
-        
-        # Adjust to be closer to border if factor is low
-        if border_distance_factor < 1.0:
-            # Calculate distance from center as percentage of max
-            dist = math.sqrt(x_offset**2 + y_offset**2) / math.sqrt((width/2)**2 + (height/2)**2)
-            
-            # If too far from border, move it closer to edge
-            if dist < (1 - border_distance_factor):
-                # Normalize to unit vector
-                if dist > 0:
-                    x_offset /= dist
-                    y_offset /= dist
-                else:
-                    # Random direction if at center
-                    angle = random.random() * 2 * math.pi
-                    x_offset = math.cos(angle)
-                    y_offset = math.sin(angle)
-                
-                # Scale to be near border based on factor
-                edge_distance = 1.0 - border_distance_factor * random.random()
-                x_offset *= edge_distance * width / 2
-                y_offset *= edge_distance * height / 2
-        
-        # Apply rotation if specified
-        if self.border.get("rotation", 0) != 0:
-            rotation_rad = math.radians(self.border["rotation"])
-            x_old, y_old = x_offset, y_offset
-            x_offset = x_old * math.cos(rotation_rad) - y_old * math.sin(rotation_rad)
-            y_offset = x_old * math.sin(rotation_rad) + y_old * math.cos(rotation_rad)
-        
-        # Calculate final coordinates
-        latitude = center["latitude"] + y_offset
-        longitude = center["longitude"] + x_offset
-        altitude = random.uniform(50, 500)  # Random altitude 50-500m
-        
-        return GeoPoint(
-            latitude=latitude,
-            longitude=longitude,
-            altitude=altitude
+        # Use geo_utils function instead of implementing it here
+        location = get_random_point_in_border(
+            self.border,
+            edge_bias=1.0 - border_distance_factor,
+            min_distance=0.0,
+            max_distance=1.0
         )
+        
+        return location
     
     def _is_in_restricted_zone(self, location: GeoPoint) -> bool:
         """Check if a location is in a restricted zone"""
@@ -131,12 +90,16 @@ class DroneSimulator:
         center = self.border["center"]
         restricted_zone_radius = min(self.border["width"], self.border["height"]) / 6
         
-        # Calculate distance from center
-        dx = (location.longitude - center["longitude"]) * math.cos(math.radians(location.latitude))
-        dy = location.latitude - center["latitude"]
-        distance = math.sqrt(dx**2 + dy**2)
+        # Calculate distance from center using geo_utils
+        distance = calculate_distance(
+            GeoPoint(latitude=center["latitude"], longitude=center["longitude"]),
+            location
+        )
         
-        return distance < restricted_zone_radius
+        # Convert from km to degrees (approximately)
+        distance_deg = distance / 111.0
+        
+        return distance_deg < restricted_zone_radius
     
     def _create_random_drone(self, drone_id: Optional[str] = None) -> Drone:
         """Create a new random drone"""
@@ -198,37 +161,26 @@ class DroneSimulator:
         if drone.speed is None or drone.heading is None:
             return drone
         
-        # Convert heading to radians (0° is North, 90° is East)
-        heading_rad = math.radians(90 - drone.heading)
+        # Use geo_utils function to calculate new position
+        new_location = calculate_new_position(
+            drone.location,
+            drone.heading,
+            drone.speed,
+            self.update_interval
+        )
         
-        # Calculate distance moved in degrees
-        # Approximate 1 degree = 111km at equator
-        # For more accuracy, this would need to account for the earth's curvature
-        time_factor = self.update_interval / 3600  # Convert seconds to hours
-        speed_km_h = drone.speed * 3.6  # Convert m/s to km/h
-        distance_km = speed_km_h * time_factor
-        distance_deg = distance_km / 111
-        
-        # Calculate new position
-        dx = distance_deg * math.cos(heading_rad)
-        dy = distance_deg * math.sin(heading_rad)
-        
-        # Apply small random drift to simulate real-world conditions
-        drift_factor = 0.2  # 20% maximum drift
-        dx += random.uniform(-drift_factor, drift_factor) * distance_deg
-        dy += random.uniform(-drift_factor, drift_factor) * distance_deg
-        
-        new_lon = drone.location.longitude + dx
-        new_lat = drone.location.latitude + dy
+        # Apply small random altitude changes
+        if new_location.altitude is not None:
+            new_location = GeoPoint(
+                latitude=new_location.latitude,
+                longitude=new_location.longitude,
+                altitude=new_location.altitude + random.uniform(-10, 10)
+            )
         
         # Create updated drone with new position
         updated_drone = drone.copy(
             update={
-                "location": GeoPoint(
-                    latitude=new_lat,
-                    longitude=new_lon,
-                    altitude=drone.location.altitude + random.uniform(-10, 10)  # Small altitude changes
-                ),
+                "location": new_location,
                 "timestamp": datetime.now(),
                 # Occasionally change heading slightly
                 "heading": (drone.heading + random.uniform(-15, 15)) % 360 if random.random() < 0.3 else drone.heading,
@@ -240,7 +192,7 @@ class DroneSimulator:
         )
         
         return updated_drone
-    
+
     def _check_for_alerts(self, drone: Drone) -> Optional[Alert]:
         """Check if a drone triggers any alerts"""
         # Check if drone is in restricted zone
@@ -294,19 +246,28 @@ class DroneSimulator:
                 for drone_id, drone in list(self.drones.items()):
                     # Update position
                     updated_drone = self._update_drone_position(drone)
+                    
+                    # Analyze drone data using DroneService
+                    updated_drone, alert = await DroneService.analyze_drone_data(updated_drone)
+                    
+                    # Update drone in simulator
                     self.drones[drone_id] = updated_drone
                     
-                    # Check for alerts
-                    alert = self._check_for_alerts(updated_drone)
-                    if alert:
-                        self.alerts.append(alert)
+                    # Check for alerts from position update
+                    position_alert = self._check_for_alerts(updated_drone)
+                    if position_alert:
+                        self.alerts.append(position_alert)
                         # Broadcast alert to clients
-                        alert_data = alert.dict()
-                        alert_data["timestamp"] = alert.timestamp.isoformat()
+                        alert_data = position_alert.dict()
+                        alert_data["timestamp"] = position_alert.timestamp.isoformat()
                         await connection_manager.broadcast({
                             "type": "alert",
                             "data": alert_data
                         })
+                    
+                    # Add alert from analysis if exists
+                    if alert:
+                        self.alerts.append(alert)
                 
                 # Occasionally add or remove drones to simulate new detections/lost signals
                 if random.random() < 0.05:  # 5% chance each update
@@ -334,6 +295,9 @@ class DroneSimulator:
                         # Remove a random drone (lost signal)
                         drone_id = random.choice(list(self.drones.keys()))
                         del self.drones[drone_id]
+                
+                # Calculate statistics using DroneService
+                stats = DroneService.calculate_drone_statistics(list(self.drones.values()))
                 
                 # Broadcast current drone positions to all clients
                 drone_data = [drone.to_dict() for drone in self.drones.values()]
