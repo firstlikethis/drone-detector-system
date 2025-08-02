@@ -7,6 +7,7 @@ import asyncio
 import random
 import logging
 import math
+from app.countermeasures import jammer, takeover, physical
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
@@ -192,6 +193,46 @@ class DroneSimulator:
         )
         
         return updated_drone
+    
+    def apply_countermeasure_effects(self):
+        """Apply effects of active countermeasures to simulated drones"""
+        try:
+            for drone_id, drone in list(self.drones.items()):
+                # Check for jamming effects
+                drone_data = drone.dict()
+                updated_data = jammer.simulate_jamming_effect(drone_data)
+                
+                # Check for takeover effects
+                if drone_id in takeover.current_targets and takeover.current_targets[drone_id]["active"]:
+                    updated_data = takeover.simulate_takeover_effect(updated_data)
+                
+                # Apply updates to drone
+                for key, value in updated_data.items():
+                    if hasattr(drone, key):
+                        setattr(drone, key, value)
+                
+                # Generate alerts for countermeasures if needed
+                if updated_data.get("is_jammed") and not drone_data.get("is_jammed"):
+                    self._create_countermeasure_alert(drone, "signal_interference", "Drone signal being jammed")
+                
+                if updated_data.get("takeover_status") == "controlled" and drone_data.get("takeover_status") != "controlled":
+                    self._create_countermeasure_alert(drone, "unauthorized_flight", "Drone under external control")
+        except Exception as e:
+            logger.error(f"Error applying countermeasure effects: {e}")
+
+    def _create_countermeasure_alert(self, drone, alert_type, description):
+        """Create an alert for countermeasure effects"""
+        from app.core.models import Alert, AlertType
+        
+        alert = Alert(
+            drone_id=drone.id,
+            alert_type=getattr(AlertType, alert_type.upper()),
+            location=drone.location,
+            description=description,
+            threat_level=drone.threat_level
+        )
+        self.alerts.append(alert)
+        return alert
 
     def _check_for_alerts(self, drone: Drone) -> Optional[Alert]:
         """Check if a drone triggers any alerts"""
@@ -240,6 +281,18 @@ class DroneSimulator:
             drone = self._create_random_drone()
             self.drones[drone.id] = drone
         
+    async def run_simulation(self, connection_manager: ConnectionManager):
+        """
+        Main simulation loop - runs continuously to update drone positions
+        and broadcast updates to connected clients
+        """
+        logger.info(f"Starting drone simulator with {self.num_drones} drones")
+        
+        # Initialize drones
+        for _ in range(self.num_drones):
+            drone = self._create_random_drone()
+            self.drones[drone.id] = drone
+        
         try:
             while True:
                 # Update all drone positions
@@ -268,6 +321,9 @@ class DroneSimulator:
                     # Add alert from analysis if exists
                     if alert:
                         self.alerts.append(alert)
+                
+                # Apply countermeasure effects to drones
+                self.apply_countermeasure_effects()
                 
                 # Occasionally add or remove drones to simulate new detections/lost signals
                 if random.random() < 0.05:  # 5% chance each update
@@ -305,6 +361,20 @@ class DroneSimulator:
                     "type": "drones",
                     "data": drone_data
                 })
+                
+                # Broadcast countermeasures status if available
+                try:
+                    countermeasures_status = {
+                        "jammers": jammer.get_active_jammers(),
+                        "takeovers": takeover.get_active_takeovers(),
+                        "physical": physical.get_active_operations()
+                    }
+                    await connection_manager.broadcast({
+                        "type": "countermeasures_status",
+                        "data": countermeasures_status
+                    })
+                except Exception as cm_err:
+                    logger.error(f"Error broadcasting countermeasures status: {cm_err}")
                 
                 # Wait for next update
                 await asyncio.sleep(self.update_interval)

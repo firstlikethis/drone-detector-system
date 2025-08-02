@@ -72,3 +72,19 @@ async def broadcast_system_status(status: Dict[str, Any]):
     
     # Broadcast to all clients
     await connection_manager.broadcast(message)
+
+async def broadcast_countermeasures_status(status: Dict[str, Any]):
+    """
+    Broadcast countermeasures status to all connected clients
+    """
+    if not connection_manager.active_connections:
+        return
+        
+    # Create message with countermeasures status
+    message = {
+        "type": "countermeasures_status",
+        "data": status
+    }
+    
+    # Broadcast to all clients
+    await connection_manager.broadcast(message)

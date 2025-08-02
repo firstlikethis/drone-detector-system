@@ -8,7 +8,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from app.api.routes import drones, system
+from app.api.routes import drones, system, countermeasures
 from app.core.globals import connection_manager, drone_simulator
 
 # Configure logging
@@ -54,6 +54,7 @@ app.add_middleware(
 # Include API routes
 app.include_router(drones.router, prefix="/api", tags=["drones"])
 app.include_router(system.router, prefix="/api", tags=["system"])
+app.include_router(countermeasures.router, prefix="/api", tags=["countermeasures"])
 
 @app.get("/")
 async def root():
