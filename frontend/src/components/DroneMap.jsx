@@ -21,8 +21,9 @@ let DefaultIcon = L.icon({
 L.Marker.prototype.options.icon = DefaultIcon;
 
 // สร้างไอคอนโดรนแบบพื้นฐาน แต่มีขนาดที่หลากหลายตามระดับภัยคุกคาม
-const createDroneIcon = (threatLevel, selected = false) => {
-  const colors = {
+const createDroneIcon = (threatLevel, selected = false, isJammed = false, isTakenOver = false) => {
+  // Base colors for threat levels
+  const baseColors = {
     none: '#3388ff',
     low: '#33cc33',
     medium: '#ffcc00',
@@ -30,7 +31,17 @@ const createDroneIcon = (threatLevel, selected = false) => {
     critical: '#ff0000'
   };
   
-  const color = colors[threatLevel] || colors.none;
+  // Determine final color based on attack status
+  let color;
+  if (isJammed) {
+    color = '#111111'; // Almost black for jammed drones
+  } else if (isTakenOver) {
+    color = '#9932CC'; // Purple for taken over drones
+  } else {
+    color = baseColors[threatLevel] || baseColors.none;
+  }
+  
+  // Adjust size based on selection and threat
   const size = selected ? 8 : {
     none: 5,
     low: 6,
@@ -42,15 +53,52 @@ const createDroneIcon = (threatLevel, selected = false) => {
   const borderColor = selected ? 'white' : 'rgba(255, 255, 255, 0.7)';
   const borderWidth = selected ? 2 : 1;
   
-  return L.divIcon({
-    className: `drone-icon drone-${threatLevel} ${selected ? 'selected' : ''}`,
-    html: `<div class="drone-marker" style="
+  // Create different visual appearance for attacked drones
+  let html;
+  if (isJammed) {
+    // Jammed drone has a dashed border
+    html = `<div class="drone-marker drone-jammed" style="
+      background-color: ${color}; 
+      width: ${size * 2}px; 
+      height: ${size * 2}px;
+      border: ${borderWidth}px dashed ${borderColor};
+      box-shadow: 0 0 ${selected ? 8 : 4}px rgba(0,0,0,0.5);
+    "></div>`;
+  } else if (isTakenOver) {
+    // Taken over drone has a special indicator
+    html = `<div class="drone-marker drone-taken-over" style="
       background-color: ${color}; 
       width: ${size * 2}px; 
       height: ${size * 2}px;
       border: ${borderWidth}px solid ${borderColor};
       box-shadow: 0 0 ${selected ? 8 : 4}px rgba(0,0,0,0.5);
-    "></div>`,
+      position: relative;
+    ">
+      <div style="
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 4px;
+        height: 4px;
+        background-color: white;
+        border-radius: 50%;
+      "></div>
+    </div>`;
+  } else {
+    // Normal drone
+    html = `<div class="drone-marker" style="
+      background-color: ${color}; 
+      width: ${size * 2}px; 
+      height: ${size * 2}px;
+      border: ${borderWidth}px solid ${borderColor};
+      box-shadow: 0 0 ${selected ? 8 : 4}px rgba(0,0,0,0.5);
+    "></div>`;
+  }
+  
+  return L.divIcon({
+    className: `drone-icon drone-${threatLevel} ${selected ? 'selected' : ''} ${isJammed ? 'jammed' : ''} ${isTakenOver ? 'taken-over' : ''}`,
+    html: html,
     iconSize: [size * 2, size * 2],
     iconAnchor: [size, size],
   });
@@ -103,7 +151,15 @@ const MapController = ({ border, selectedDrone, followSelected }) => {
 };
 
 // Component สำหรับการควบคุมด้วย UI
-const MapControls = ({ onZoomIn, onZoomOut, onReset, onToggleFullscreen }) => {
+const MapControls = ({ 
+  onZoomIn, 
+  onZoomOut, 
+  onReset, 
+  onToggleFullscreen, 
+  onClearTrails,
+  trailsVisible,
+  onToggleTrails
+}) => {
   return (
     <div className="absolute bottom-6 right-4 z-[1000] flex flex-col space-y-2">
       <button
@@ -133,6 +189,26 @@ const MapControls = ({ onZoomIn, onZoomOut, onReset, onToggleFullscreen }) => {
       >
         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
           <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
+        </svg>
+      </button>
+      
+      <button
+        onClick={onToggleTrails}
+        className={`bg-white shadow-md p-2 rounded-full hover:bg-gray-100 ${trailsVisible ? 'border-2 border-blue-500' : ''}`}
+        title={trailsVisible ? "Hide Drone Trails" : "Show Drone Trails"}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+          <path d="M2 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1H3a1 1 0 01-1-1V4zM8 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1H9a1 1 0 01-1-1V4zM15 3a1 1 0 00-1 1v12a1 1 0 001 1h2a1 1 0 001-1V4a1 1 0 00-1-1h-2z" />
+        </svg>
+      </button>
+      
+      <button
+        onClick={onClearTrails}
+        className="bg-white shadow-md p-2 rounded-full hover:bg-gray-100"
+        title="Clear All Trails"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+          <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
         </svg>
       </button>
       
@@ -198,6 +274,18 @@ const MapLegend = () => {
               </div>
             </div>
             
+            <h3 className="font-medium mt-3 mb-2">Status:</h3>
+            <div className="space-y-1">
+              <div className="flex items-center">
+                <div className="w-4 h-4 bg-black border border-dashed border-white rounded-full mr-2"></div>
+                <span>Jammed</span>
+              </div>
+              <div className="flex items-center">
+                <div className="w-4 h-4 bg-purple-700 rounded-full mr-2"></div>
+                <span>Taken Over</span>
+              </div>
+            </div>
+            
             <h3 className="font-medium mt-3 mb-2">Areas:</h3>
             <div className="space-y-1">
               <div className="flex items-center">
@@ -218,7 +306,15 @@ const MapLegend = () => {
 
 // Component หลัก DroneMap
 const DroneMap = ({ followSelected = false }) => {
-  const { drones, alerts, border, selectedDroneId, selectDrone } = useDroneContext();
+  const { 
+    drones, 
+    alerts, 
+    border, 
+    selectedDroneId, 
+    selectDrone,
+    countermeasuresStatus
+  } = useDroneContext();
+  
   const mapRef = useRef(null);
   const [mapCenter, setMapCenter] = useState([
     parseFloat(import.meta.env.VITE_DEFAULT_MAP_CENTER_LAT || '16.7769'),
@@ -229,6 +325,7 @@ const DroneMap = ({ followSelected = false }) => {
   
   // เก็บประวัติตำแหน่งของโดรนสำหรับแสดงเส้นทางการเคลื่อนที่
   const [droneTrails, setDroneTrails] = useState({});
+  const [trailsVisible, setTrailsVisible] = useState(true);
   
   // จัดการโดรนที่อยู่ซ้อนทับกัน
   const [droneOffsets, setDroneOffsets] = useState({});
@@ -236,11 +333,62 @@ const DroneMap = ({ followSelected = false }) => {
   // หาโดรนที่เลือก
   const selectedDrone = drones.find(d => d.id === selectedDroneId);
 
+  // ตรวจสอบสถานะการถูกโจมตีของโดรน
+  const [jammedDrones, setJammedDrones] = useState(new Set());
+  const [takenOverDrones, setTakenOverDrones] = useState(new Set());
+  
+  // อัปเดตสถานะการโจมตีจาก countermeasuresStatus
+  useEffect(() => {
+    if (!countermeasuresStatus) return;
+    
+    const newJammedDrones = new Set();
+    const newTakenOverDrones = new Set();
+    
+    // ตรวจสอบโดรนที่ถูก jam
+    if (countermeasuresStatus.jammers && countermeasuresStatus.jammers.jammers) {
+      const jammers = countermeasuresStatus.jammers.jammers;
+      
+      // ตรวจสอบ jammers ทั้งหมด
+      Object.keys(jammers).forEach(jammerId => {
+        // ถ้า ID ของ jammer มีรูปแบบ api_DRONE_ID
+        const match = jammerId.match(/api_(.+)/);
+        if (match) {
+          const droneId = match[1];
+          newJammedDrones.add(droneId);
+        }
+      });
+    }
+    
+    // ตรวจสอบโดรนที่ถูก take over
+    if (countermeasuresStatus.takeovers && countermeasuresStatus.takeovers.takeovers) {
+      const takeovers = countermeasuresStatus.takeovers.takeovers;
+      
+      // เพิ่ม drone_id ทั้งหมดที่มีในรายการ takeovers
+      Object.keys(takeovers).forEach(droneId => {
+        if (takeovers[droneId].active) {
+          newTakenOverDrones.add(droneId);
+        }
+      });
+    }
+    
+    setJammedDrones(newJammedDrones);
+    setTakenOverDrones(newTakenOverDrones);
+  }, [countermeasuresStatus]);
+
   // อัปเดตเส้นทางโดรนเมื่อข้อมูลโดรนเปลี่ยนแปลง
   useEffect(() => {
+    if (!trailsVisible) {
+      // ถ้าปิดการแสดงเส้นทาง ไม่ต้องอัปเดต
+      return;
+    }
+    
     const newTrails = {...droneTrails};
     const dronePositions = new Map(); // ใช้สำหรับตรวจสอบการซ้อนทับ
     const newOffsets = {}; // ค่า offset ใหม่สำหรับโดรนที่ซ้อนทับกัน
+    
+    // ระยะเวลาสูงสุดที่จะเก็บ trail (ms)
+    const MAX_TRAIL_AGE = 60000; // 1 นาที
+    const currentTime = Date.now();
     
     // ปรับปรุงเส้นทางโดรนและตรวจสอบการซ้อนทับ
     drones.forEach(drone => {
@@ -269,17 +417,27 @@ const DroneMap = ({ followSelected = false }) => {
       const trail = newTrails[drone.id];
       const lastPos = trail.length > 0 ? trail[trail.length - 1] : null;
       
+      // เพิ่มเวลาปัจจุบันให้กับตำแหน่ง
+      const newPosition = {
+        pos: [location.latitude, location.longitude],
+        time: currentTime
+      };
+      
       // เพิ่มตำแหน่งใหม่ถ้าไม่ซ้ำกับตำแหน่งล่าสุด
       if (!lastPos || 
-          Math.abs(lastPos[0] - location.latitude) > 0.00001 || 
-          Math.abs(lastPos[1] - location.longitude) > 0.00001) {
+          Math.abs(lastPos.pos[0] - location.latitude) > 0.00001 || 
+          Math.abs(lastPos.pos[1] - location.longitude) > 0.00001) {
         
-        trail.push([location.latitude, location.longitude]);
-        
-        // เก็บเฉพาะ 20 ตำแหน่งล่าสุด
-        if (trail.length > 20) {
-          trail.shift();
-        }
+        trail.push(newPosition);
+      }
+      
+      // ลบตำแหน่งที่เก่าเกิน
+      const filteredTrail = trail.filter(point => (currentTime - point.time) <= MAX_TRAIL_AGE);
+      newTrails[drone.id] = filteredTrail;
+      
+      // จำกัดจำนวนจุดใน trail สูงสุด 15 จุด
+      if (newTrails[drone.id].length > 15) {
+        newTrails[drone.id] = newTrails[drone.id].slice(-15);
       }
     });
     
@@ -293,7 +451,7 @@ const DroneMap = ({ followSelected = false }) => {
     
     setDroneTrails(newTrails);
     setDroneOffsets(newOffsets);
-  }, [drones]);
+  }, [drones, trailsVisible]);
 
   // จัดการการขยายเต็มจอ
   const toggleFullscreen = () => {
@@ -353,6 +511,20 @@ const DroneMap = ({ followSelected = false }) => {
       map.fitBounds(bounds);
     }
   };
+  
+  // ล้างเส้นทางทั้งหมด
+  const handleClearTrails = () => {
+    setDroneTrails({});
+  };
+  
+  // สลับการแสดงเส้นทาง
+  const handleToggleTrails = () => {
+    setTrailsVisible(!trailsVisible);
+    if (!trailsVisible) {
+      // ถ้าเพิ่งเปิดการแสดงเส้นทาง ให้เคลียร์เส้นทางเก่าออกก่อน
+      setDroneTrails({});
+    }
+  };
 
   // สีสำหรับระดับภัยคุกคาม
   const getThreatColor = (threatLevel) => {
@@ -368,9 +540,22 @@ const DroneMap = ({ followSelected = false }) => {
 
   // แสดงรายละเอียดโดรนในป๊อปอัป
   const formatDroneDetails = (drone) => {
+    const isJammed = jammedDrones.has(drone.id);
+    const isTakenOver = takenOverDrones.has(drone.id);
+    
     return (
       <div className="drone-popup">
         <h3 className="font-bold text-base">Drone #{drone.id}</h3>
+        
+        {/* แสดงสถานะการโจมตี */}
+        {(isJammed || isTakenOver) && (
+          <div className={`text-xs font-medium mt-1 p-1 rounded ${
+            isJammed ? 'bg-gray-800 text-white' : 'bg-purple-100 text-purple-800'
+          }`}>
+            Status: {isJammed ? 'JAMMED' : 'TAKEN OVER'}
+          </div>
+        )}
+        
         <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm mt-2">
           <span className="font-semibold">Type:</span>
           <span className="capitalize">{drone.type}</span>
@@ -518,38 +703,51 @@ const DroneMap = ({ followSelected = false }) => {
             </LayerGroup>
           </LayersControl.Overlay>
           
-          <LayersControl.Overlay checked name="Drone Trails">
+          <LayersControl.Overlay checked={trailsVisible} name="Drone Trails">
             <LayerGroup>
-              {/* เส้นทางการเคลื่อนที่ของโดรน */}
-              {Object.entries(droneTrails).map(([droneId, trail]) => {
+              {trailsVisible && Object.entries(droneTrails).map(([droneId, trail]) => {
                 if (trail.length < 2) return null;
                 
                 const drone = drones.find(d => d.id === droneId);
                 if (!drone) return null;
                 
+                // ตรวจสอบสถานะการโจมตี
+                const isJammed = jammedDrones.has(droneId);
+                const isTakenOver = takenOverDrones.has(droneId);
+                
+                // กำหนดสีตามสถานะ
+                let trailColor;
+                if (isJammed) {
+                  trailColor = '#333333'; // สีเทาเข้มสำหรับโดรนที่ถูก jam
+                } else if (isTakenOver) {
+                  trailColor = '#9932CC'; // สีม่วงสำหรับโดรนที่ถูก take over
+                } else {
+                  trailColor = getThreatColor(drone.threat_level);
+                }
+                
                 return (
                   <React.Fragment key={`trail-${droneId}`}>
                     {/* เส้นเชื่อมตำแหน่งโดรน */}
                     <Polyline 
-                      positions={trail}
+                      positions={trail.map(p => p.pos)}
                       pathOptions={{
-                        color: getThreatColor(drone.threat_level),
+                        color: trailColor,
                         weight: drone.id === selectedDroneId ? 3 : 2,
                         opacity: drone.id === selectedDroneId ? 0.8 : 0.5,
                         dashArray: '3, 5',
                       }}
                     />
                     
-                    {/* จุดแสดงตำแหน่งก่อนหน้า */}
-                    {trail.slice(0, -1).map((pos, idx) => (
+                    {/* จุดแสดงตำแหน่งก่อนหน้า (เฉพาะโดรนที่เลือก หรือไม่ได้ถูกโจมตี) */}
+                    {!isJammed && !isTakenOver && (drone.id === selectedDroneId) && trail.slice(0, -1).map((point, idx) => (
                       <Circle 
                         key={`trail-point-${droneId}-${idx}`}
-                        center={pos}
+                        center={point.pos}
                         radius={5}
                         pathOptions={{
-                          fillColor: getThreatColor(drone.threat_level),
+                          fillColor: trailColor,
                           fillOpacity: 0.4,
-                          color: getThreatColor(drone.threat_level),
+                          color: trailColor,
                           weight: 1,
                         }}
                       />
@@ -591,11 +789,15 @@ const DroneMap = ({ followSelected = false }) => {
           const offsetIndex = droneOffsets[drone.id] || 0;
           const position = getDronePosition(drone, offsetIndex);
           
+          // ตรวจสอบสถานะการโจมตี
+          const isJammed = jammedDrones.has(drone.id);
+          const isTakenOver = takenOverDrones.has(drone.id);
+          
           return (
             <Marker
               key={drone.id}
               position={position}
-              icon={createDroneIcon(drone.threat_level, isSelected)}
+              icon={createDroneIcon(drone.threat_level, isSelected, isJammed, isTakenOver)}
               eventHandlers={{
                 click: () => handleDroneClick(drone),
               }}
@@ -604,9 +806,14 @@ const DroneMap = ({ followSelected = false }) => {
               <Tooltip 
                 direction="top" 
                 permanent={isSelected}
-                className={`${isSelected ? 'font-medium' : 'text-xs'}`}
+                className={`${isSelected ? 'font-medium' : 'text-xs'} ${
+                  isJammed ? 'bg-gray-800 text-white' : 
+                  isTakenOver ? 'bg-purple-700 text-white' : ''
+                }`}
               >
                 #{drone.id} ({drone.type})
+                {isJammed && " [JAMMED]"}
+                {isTakenOver && " [CONTROLLED]"}
               </Tooltip>
               <Popup minWidth={250} maxWidth={320}>
                 {formatDroneDetails(drone)}
@@ -629,6 +836,9 @@ const DroneMap = ({ followSelected = false }) => {
         onZoomOut={handleZoomOut}
         onReset={handleResetView}
         onToggleFullscreen={toggleFullscreen}
+        onClearTrails={handleClearTrails}
+        trailsVisible={trailsVisible}
+        onToggleTrails={handleToggleTrails}
       />
       
       {/* คำอธิบายแผนที่ */}
@@ -638,6 +848,25 @@ const DroneMap = ({ followSelected = false }) => {
       {followSelected && selectedDroneId && (
         <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-green-600 text-white px-3 py-1 rounded-full shadow-md text-sm">
           Following Drone #{selectedDroneId}
+        </div>
+      )}
+      
+      {/* จำนวนโดรนที่ถูกโจมตี */}
+      {(jammedDrones.size > 0 || takenOverDrones.size > 0) && (
+        <div className="absolute top-4 right-4 bg-black bg-opacity-75 text-white px-3 py-2 rounded shadow-md text-sm">
+          <div className="font-medium">Attack Status</div>
+          {jammedDrones.size > 0 && (
+            <div className="text-xs mt-1">
+              <span className="inline-block w-2 h-2 bg-gray-800 rounded-full mr-1"></span>
+              Jammed: {jammedDrones.size}
+            </div>
+          )}
+          {takenOverDrones.size > 0 && (
+            <div className="text-xs mt-1">
+              <span className="inline-block w-2 h-2 bg-purple-700 rounded-full mr-1"></span>
+              Taken Over: {takenOverDrones.size}
+            </div>
+          )}
         </div>
       )}
       
@@ -651,6 +880,14 @@ const DroneMap = ({ followSelected = false }) => {
         
         .drone-critical .drone-marker {
           animation: critical-pulse 1s infinite;
+        }
+        
+        .drone-jammed .drone-marker {
+          animation: none !important;
+        }
+        
+        .drone-taken-over .drone-marker {
+          animation: taken-over-pulse 1.5s infinite;
         }
         
         .selected .drone-marker {
@@ -685,6 +922,21 @@ const DroneMap = ({ followSelected = false }) => {
           100% {
             transform: scale(0.8);
             opacity: 1;
+          }
+        }
+        
+        @keyframes taken-over-pulse {
+          0% {
+            transform: scale(0.9);
+            opacity: 0.9;
+          }
+          50% {
+            transform: scale(1.1);
+            opacity: 1;
+          }
+          100% {
+            transform: scale(0.9);
+            opacity: 0.9;
           }
         }
         

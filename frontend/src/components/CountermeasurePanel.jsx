@@ -16,12 +16,17 @@ import {
 } from '../api/countermeasureApi';
 
 const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
-  const { selectedDroneId, drones, refreshData, countermeasuresStatus } = useDroneContext();
+  const { 
+    selectedDroneId, 
+    drones, 
+    refreshData, 
+    countermeasuresStatus 
+  } = useDroneContext();
   
   const selectedDrone = drones.find(d => d.id === selectedDroneId);
   
   const [activeTab, setActiveTab] = useState('jam'); 
-  const [jammers, setJammers] = useState([]);
+  const [jammers, setJammers] = useState({});
   const [takeoverStatus, setTakeoverStatus] = useState({});
   const [equipment, setEquipment] = useState({});
   const [vulnerabilities, setVulnerabilities] = useState([]);
@@ -41,6 +46,10 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
   const statusUpdateTimerRef = useRef(null);
   const messageTimerRef = useRef(null);
   
+  // Track attacked drones for UI feedback
+  const [jammedDrones, setJammedDrones] = useState(new Set());
+  const [takenOverDrones, setTakenOverDrones] = useState(new Set());
+  
   // ตรวจสอบว่าโดรนที่เลือกกำลังถูกแจมหรือควบคุมอยู่หรือไม่
   const isSelectedDroneJammed = useRef(false);
   const isSelectedDroneTakenOver = useRef(false);
@@ -59,6 +68,37 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
       if (countermeasuresStatus.physical) {
         setEquipment(countermeasuresStatus.physical.equipment || {});
       }
+      
+      // Extract jammed and taken over drones
+      const newJammedDrones = new Set();
+      const newTakenOverDrones = new Set();
+      
+      // Check jammers
+      if (countermeasuresStatus.jammers && countermeasuresStatus.jammers.jammers) {
+        const jammers = countermeasuresStatus.jammers.jammers;
+        
+        Object.keys(jammers).forEach(jammerId => {
+          const match = jammerId.match(/api_(.+)/);
+          if (match) {
+            const droneId = match[1];
+            newJammedDrones.add(droneId);
+          }
+        });
+      }
+      
+      // Check takeovers
+      if (countermeasuresStatus.takeovers && countermeasuresStatus.takeovers.takeovers) {
+        const takeovers = countermeasuresStatus.takeovers.takeovers;
+        
+        Object.keys(takeovers).forEach(droneId => {
+          if (takeovers[droneId].active) {
+            newTakenOverDrones.add(droneId);
+          }
+        });
+      }
+      
+      setJammedDrones(newJammedDrones);
+      setTakenOverDrones(newTakenOverDrones);
     }
     
     // Check if selected drone is affected by countermeasures
@@ -168,6 +208,9 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
       return;
     }
     
+    // Check if drone is already jammed
+    const isAlreadyJammed = jammedDrones.has(selectedDroneId);
+    
     const actionFunc = async () => {
       setLoading(true);
       
@@ -181,7 +224,7 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
         );
         
         if (result.status === 'success') {
-          showMessage(`Jamming drone ${selectedDroneId}`);
+          showMessage(`${isAlreadyJammed ? 'Updated jamming for' : 'Jamming'} drone ${selectedDroneId}`);
           fetchStatusData();
           refreshData();
         } else {
@@ -195,7 +238,7 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
       }
     };
     
-    confirmAndExecute(actionFunc, `Jam drone ${selectedDroneId}?`);
+    confirmAndExecute(actionFunc, `${isAlreadyJammed ? 'Update jamming for' : 'Jam'} drone ${selectedDroneId}?`);
   };
   
   const handleDeactivateJammer = async (jammerId) => {
@@ -206,6 +249,22 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
       
       if (result.status === 'success') {
         showMessage(`Jammer ${jammerId} deactivated`);
+        
+        // If this is jamming our selected drone, update the reference
+        const match = jammerId.match(/api_(.+)/);
+        if (match && match[1] === selectedDroneId) {
+          isSelectedDroneJammed.current = false;
+        }
+        
+        // Update our UI state
+        setJammedDrones(prevJammed => {
+          const newJammed = new Set(prevJammed);
+          if (match) {
+            newJammed.delete(match[1]);
+          }
+          return newJammed;
+        });
+        
         fetchStatusData();
         refreshData();
       } else {
@@ -225,6 +284,9 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
       return;
     }
     
+    // Check if drone is already taken over
+    const isAlreadyTakenOver = takenOverDrones.has(selectedDroneId);
+    
     const actionFunc = async () => {
       setLoading(true);
       
@@ -239,7 +301,15 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
         );
         
         if (result.status === 'active') {
-          showMessage(`Taking over drone ${selectedDroneId}`);
+          showMessage(`${isAlreadyTakenOver ? 'Updated takeover of' : 'Taking over'} drone ${selectedDroneId}`);
+          
+          // Update our UI state
+          setTakenOverDrones(prev => {
+            const newSet = new Set(prev);
+            newSet.add(selectedDroneId);
+            return newSet;
+          });
+          
           fetchStatusData();
           refreshData();
         } else {
@@ -253,7 +323,7 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
       }
     };
     
-    confirmAndExecute(actionFunc, `Take over drone ${selectedDroneId} using ${takeoverMethod}?`);
+    confirmAndExecute(actionFunc, `${isAlreadyTakenOver ? 'Update takeover of' : 'Take over'} drone ${selectedDroneId} using ${takeoverMethod}?`);
   };
   
   // Handle force landing
@@ -271,6 +341,14 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
         
         if (result.status === 'success') {
           showMessage(`Forcing drone ${selectedDroneId} to land`);
+          
+          // Update our UI state
+          setTakenOverDrones(prev => {
+            const newSet = new Set(prev);
+            newSet.add(selectedDroneId);
+            return newSet;
+          });
+          
           fetchStatusData();
           refreshData();
         } else {
@@ -301,6 +379,16 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
       
       if (result.status === 'success' || result.status === 'stopped') {
         showMessage(`Takeover stopped for drone ${selectedDroneId}`);
+        
+        // Update our UI state
+        setTakenOverDrones(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(selectedDroneId);
+          return newSet;
+        });
+        
+        isSelectedDroneTakenOver.current = false;
+        
         fetchStatusData();
         refreshData();
       } else {
@@ -388,6 +476,13 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
       
       if (result.status === 'success') {
         showMessage('All countermeasures stopped');
+        
+        // Clear our UI state
+        setJammedDrones(new Set());
+        setTakenOverDrones(new Set());
+        isSelectedDroneJammed.current = false;
+        isSelectedDroneTakenOver.current = false;
+        
         fetchStatusData();
         refreshData();
       } else {
@@ -430,11 +525,29 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
           const timeElapsed = Math.floor((Date.now() / 1000) - jammer.start_time);
           const timeRemaining = jammer.duration ? jammer.duration - timeElapsed : null;
           
+          // Check if this jammer is targeting a drone
+          const targetedDroneMatch = jammerId.match(/api_(.+)/);
+          const targetedDrone = targetedDroneMatch ? targetedDroneMatch[1] : null;
+          
           return (
-            <div key={jammerId} className="bg-gray-800 p-3 rounded-lg shadow-sm border border-gray-700">
+            <div 
+              key={jammerId} 
+              className={`bg-gray-800 p-3 rounded-lg shadow-sm border ${
+                targetedDrone && targetedDrone === selectedDroneId 
+                  ? 'border-blue-500' 
+                  : 'border-gray-700'
+              }`}
+            >
               <div className="flex justify-between items-start">
                 <div>
-                  <div className="font-medium text-sm text-blue-300">{jammerId}</div>
+                  <div className="font-medium text-sm text-blue-300">
+                    {jammerId}
+                    {targetedDrone && (
+                      <span className="ml-1 text-xs bg-blue-900 text-white px-1 py-0.5 rounded">
+                        Drone #{targetedDrone}
+                      </span>
+                    )}
+                  </div>
                   <div className="text-xs text-gray-400 mt-1">
                     Frequencies: {frequencies.map(f => `${(f / 1e9).toFixed(1)} GHz`).join(', ')}
                   </div>
@@ -605,24 +718,42 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
   const getDroneStatusIndicator = () => {
     if (!selectedDroneId) return null;
     
+    // Check current drone status
+    const isJammed = jammedDrones.has(selectedDroneId);
+    const isTakenOver = takenOverDrones.has(selectedDroneId);
+    
     let statusText = "No active countermeasures";
     let statusColor = "bg-gray-500";
+    let pulseClass = "";
     
-    if (isSelectedDroneJammed.current) {
+    if (isJammed) {
       statusText = "Jamming Active";
-      statusColor = "bg-red-500";
-    } else if (isSelectedDroneTakenOver.current) {
+      statusColor = "bg-black";
+      pulseClass = "animate-pulse";
+    } else if (isTakenOver) {
       statusText = "Control Active";
       statusColor = "bg-purple-500";
+      pulseClass = "animate-pulse";
     }
     
     return (
       <div className="flex items-center mt-1">
-        <div className={`w-2 h-2 rounded-full mr-1 ${statusColor} ${isSelectedDroneJammed.current || isSelectedDroneTakenOver.current ? 'animate-pulse' : ''}`}></div>
+        <div className={`w-2 h-2 rounded-full mr-1 ${statusColor} ${pulseClass}`}></div>
         <span className="text-xs text-gray-400">{statusText}</span>
       </div>
     );
   };
+  
+  // Count active countermeasures
+  const getCountermeasureCounts = () => {
+    return {
+      jammed: jammedDrones.size,
+      takenOver: takenOverDrones.size,
+      total: jammedDrones.size + takenOverDrones.size
+    };
+  };
+  
+  const counts = getCountermeasureCounts();
   
   return (
     <div className="bg-gray-900 text-white h-full flex flex-col">
@@ -648,6 +779,25 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
           )}
         </div>
       </div>
+      
+      {/* Active countermeasures count */}
+      {counts.total > 0 && (
+        <div className="bg-gray-800 px-3 py-2 border-b border-gray-700 flex justify-between items-center">
+          <div className="text-sm">Active Countermeasures</div>
+          <div className="flex space-x-2">
+            {counts.jammed > 0 && (
+              <span className="text-xs bg-gray-900 text-white px-2 py-0.5 rounded">
+                {counts.jammed} Jammed
+              </span>
+            )}
+            {counts.takenOver > 0 && (
+              <span className="text-xs bg-purple-900 text-white px-2 py-0.5 rounded">
+                {counts.takenOver} Controlled
+              </span>
+            )}
+          </div>
+        </div>
+      )}
       
       {/* Tab navigation */}
       <div className="bg-gray-800 flex border-b border-gray-700">
@@ -737,7 +887,7 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
               <button
                 className={`w-full py-2 px-4 rounded font-medium ${
                   loading ? 'bg-gray-600 cursor-not-allowed' :
-                  isSelectedDroneJammed.current ? 'bg-red-700 hover:bg-red-600' :
+                  jammedDrones.has(selectedDroneId) ? 'bg-red-700 hover:bg-red-600' :
                   'bg-red-600 hover:bg-red-500'
                 } ${!selectedDroneId ? 'opacity-50 cursor-not-allowed' : ''} transition-colors`}
                 onClick={handleJamDrone}
@@ -751,7 +901,7 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
                     </svg>
                     Processing...
                   </div>
-                ) : isSelectedDroneJammed.current ? 'Update Jamming' : 'Jam Drone Control'}
+                ) : jammedDrones.has(selectedDroneId) ? 'Update Jamming' : 'Jam Drone Control'}
               </button>
               
               {/* Emergency Buttons */}
@@ -841,13 +991,13 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
                 <button
                   className={`py-2 px-4 rounded font-medium ${
                     loading ? 'bg-gray-600 cursor-not-allowed' :
-                    isSelectedDroneTakenOver.current ? 'bg-purple-700 hover:bg-purple-600' :
+                    takenOverDrones.has(selectedDroneId) ? 'bg-purple-700 hover:bg-purple-600' :
                     'bg-purple-600 hover:bg-purple-500'
                   } ${!selectedDroneId ? 'opacity-50 cursor-not-allowed' : ''} transition-colors`}
                   onClick={handleTakeoverDrone}
                   disabled={loading || !selectedDroneId}
                 >
-                  {isSelectedDroneTakenOver.current ? 'Update Control' : 'Take Control'}
+                  {takenOverDrones.has(selectedDroneId) ? 'Update Control' : 'Take Control'}
                 </button>
                 <button
                   className={`py-2 px-4 rounded font-medium ${
@@ -864,9 +1014,9 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
               <button
                 className={`w-full py-2 px-4 rounded font-medium ${
                   loading ? 'bg-gray-600 cursor-not-allowed' : 'bg-gray-700 hover:bg-gray-600'
-                } ${!selectedDroneId || !isSelectedDroneTakenOver.current ? 'opacity-50 cursor-not-allowed' : ''} transition-colors`}
+                } ${!selectedDroneId || !takenOverDrones.has(selectedDroneId) ? 'opacity-50 cursor-not-allowed' : ''} transition-colors`}
                 onClick={handleStopTakeover}
-                disabled={loading || !selectedDroneId || !isSelectedDroneTakenOver.current}
+                disabled={loading || !selectedDroneId || !takenOverDrones.has(selectedDroneId)}
               >
                 Stop Takeover
               </button>
