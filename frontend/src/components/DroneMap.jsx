@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Circle, Tooltip, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Circle, Tooltip, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { useDroneContext } from '../context/DroneContext';
 
 // Fix for Leaflet marker icons in React
 // We need to manually set the path to marker icons since the default paths in Leaflet don't work in React
@@ -55,7 +56,7 @@ const droneIcons = {
 };
 
 // Component to handle map auto-centering
-const MapController = ({ border, drones }) => {
+const MapController = ({ border, selectedDrone, followSelected }) => {
   const map = useMap();
 
   useEffect(() => {
@@ -67,24 +68,34 @@ const MapController = ({ border, drones }) => {
     }
   }, [map, border]);
 
+  // Follow selected drone if enabled
+  useEffect(() => {
+    if (followSelected && selectedDrone && selectedDrone.location) {
+      map.setView(
+        [selectedDrone.location.latitude, selectedDrone.location.longitude],
+        map.getZoom()
+      );
+    }
+  }, [map, selectedDrone, followSelected]);
+
   return null;
 };
 
 // Main DroneMap component
-const DroneMap = ({ 
-  drones = [], 
-  alerts = [], 
-  border = null,
-  onDroneClick,
-  selectedDroneId = null,
-  followSelected = false
-}) => {
+const DroneMap = ({ followSelected = false }) => {
+  const { drones, alerts, border, selectedDroneId, selectDrone } = useDroneContext();
   const mapRef = useRef(null);
-  const [mapCenter, setMapCenter] = useState([16.7769, 98.9761]); // Default center (Mae Sot, Thailand)
-  const [mapZoom, setMapZoom] = useState(13);
+  const [mapCenter, setMapCenter] = useState([
+    parseFloat(import.meta.env.VITE_DEFAULT_MAP_CENTER_LAT || '16.7769'),
+    parseFloat(import.meta.env.VITE_DEFAULT_MAP_CENTER_LON || '98.9761')
+  ]);
+  const [mapZoom, setMapZoom] = useState(parseInt(import.meta.env.VITE_DEFAULT_MAP_ZOOM || '13'));
 
   // Track previous positions for drone trails
   const [droneTrails, setDroneTrails] = useState({});
+
+  // Find selected drone
+  const selectedDrone = drones.find(d => d.id === selectedDroneId);
 
   // Update drone trails when drones change
   useEffect(() => {
@@ -125,65 +136,6 @@ const DroneMap = ({
     
     setDroneTrails(newTrails);
   }, [drones]);
-
-  // Follow selected drone if enabled
-  useEffect(() => {
-    if (followSelected && selectedDroneId && mapRef.current) {
-      const drone = drones.find(d => d.id === selectedDroneId);
-      if (drone) {
-        const map = mapRef.current;
-        map.setView(
-          [drone.location.latitude, drone.location.longitude],
-          map.getZoom()
-        );
-      }
-    }
-  }, [drones, selectedDroneId, followSelected]);
-
-  // Calculate border polygon coordinates
-  const getBorderPolygon = () => {
-    if (!border || !border.center) return null;
-    
-    const center = [border.center.latitude, border.center.longitude];
-    const width = border.width;
-    const height = border.height;
-    const rotation = border.rotation || 0;
-    
-    // Calculate corners (clockwise from top-left)
-    const halfWidth = width / 2;
-    const halfHeight = height / 2;
-    
-    // Base corners before rotation
-    const corners = [
-      [center[0] - halfHeight, center[1] - halfWidth], // Top-left
-      [center[0] - halfHeight, center[1] + halfWidth], // Top-right
-      [center[0] + halfHeight, center[1] + halfWidth], // Bottom-right
-      [center[0] + halfHeight, center[1] - halfWidth], // Bottom-left
-    ];
-    
-    // If rotation is zero, return corners as is
-    if (rotation === 0) {
-      return corners;
-    }
-    
-    // Apply rotation
-    const rotationRad = (rotation * Math.PI) / 180;
-    const cos = Math.cos(rotationRad);
-    const sin = Math.sin(rotationRad);
-    
-    return corners.map(corner => {
-      const x = corner[1] - center[1];
-      const y = corner[0] - center[0];
-      
-      const rotatedX = x * cos - y * sin;
-      const rotatedY = x * sin + y * cos;
-      
-      return [
-        center[0] + rotatedY,
-        center[1] + rotatedX,
-      ];
-    });
-  };
 
   // Get threat color for various elements
   const getThreatColor = (threatLevel) => {
@@ -238,6 +190,11 @@ const DroneMap = ({
         </div>
       </div>
     );
+  };
+
+  // Handle clicking on a drone
+  const handleDroneClick = (drone) => {
+    selectDrone(drone.id);
   };
 
   return (
@@ -345,7 +302,7 @@ const DroneMap = ({
             position={[drone.location.latitude, drone.location.longitude]}
             icon={getDroneIcon(drone.threat_level)}
             eventHandlers={{
-              click: () => onDroneClick && onDroneClick(drone),
+              click: () => handleDroneClick(drone),
             }}
             zIndexOffset={drone.id === selectedDroneId ? 1000 : 0}
           >
@@ -378,7 +335,11 @@ const DroneMap = ({
           </Circle>
         ))}
         
-        <MapController border={border} drones={drones} />
+        <MapController 
+          border={border} 
+          selectedDrone={selectedDrone} 
+          followSelected={followSelected} 
+        />
       </MapContainer>
       
       {/* CSS for drone markers */}
