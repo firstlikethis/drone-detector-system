@@ -9,7 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.api.routes import drones, system, countermeasures
-from app.core.globals import connection_manager, drone_simulator
+from app.core.connection import connection_manager
+from app.core.globals import drone_simulator
 
 # Configure logging
 logging.basicConfig(

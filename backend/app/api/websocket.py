@@ -6,7 +6,7 @@ import logging
 from typing import List, Dict, Any
 
 from fastapi import WebSocket, WebSocketDisconnect
-from app.core.globals import connection_manager
+from app.core.connection import connection_manager
 
 # Configure logging
 logger = logging.getLogger(__name__)

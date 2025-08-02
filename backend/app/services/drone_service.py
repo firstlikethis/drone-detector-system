@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional, Tuple
 
 from app.core.models import Drone, Alert, ThreatLevel, AlertType, GeoPoint
 from app.api.websocket import broadcast_alert
-from app.core.globals import connection_manager
+from app.core.connection import connection_manager
 
 logger = logging.getLogger(__name__)
 
