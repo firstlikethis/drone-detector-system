@@ -8,7 +8,7 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true, // Listen on all addresses
-    open: false, // Don't open browser automatically
+    open: true, // Open browser automatically
   },
   resolve: {
     alias: {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useDroneContext } from '../context/DroneContext';
 import { 
   activateJamming, 
@@ -27,6 +27,8 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
   const [vulnerabilities, setVulnerabilities] = useState([]);
   const [message, setMessage] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
+  const [confirmAction, setConfirmAction] = useState(null);
   
   const [jamPower, setJamPower] = useState(70);
   const [jamDuration, setJamDuration] = useState(30);
@@ -35,7 +37,16 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
   const [takeoverCommand, setTakeoverCommand] = useState('land');
   const [captureMethod, setCaptureMethod] = useState('net_gun');
   
+  // Refs for animations
+  const statusUpdateTimerRef = useRef(null);
+  const messageTimerRef = useRef(null);
+  
+  // ตรวจสอบว่าโดรนที่เลือกกำลังถูกแจมหรือควบคุมอยู่หรือไม่
+  const isSelectedDroneJammed = useRef(false);
+  const isSelectedDroneTakenOver = useRef(false);
+  
   useEffect(() => {
+    // Update countermeasure status from context
     if (countermeasuresStatus) {
       if (countermeasuresStatus.jammers) {
         setJammers(countermeasuresStatus.jammers.jammers || {});
@@ -49,16 +60,37 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
         setEquipment(countermeasuresStatus.physical.equipment || {});
       }
     }
-  }, [countermeasuresStatus]);
+    
+    // Check if selected drone is affected by countermeasures
+    isSelectedDroneJammed.current = false;
+    isSelectedDroneTakenOver.current = false;
+    
+    if (selectedDroneId && countermeasuresStatus) {
+      // Check if selected drone is being jammed
+      const jammerKeys = Object.keys(countermeasuresStatus.jammers?.jammers || {});
+      const jammingThisDrone = jammerKeys.some(key => key.includes(selectedDroneId));
+      isSelectedDroneJammed.current = jammingThisDrone;
+      
+      // Check if selected drone is being taken over
+      const takenOverDrones = Object.keys(countermeasuresStatus.takeovers?.takeovers || {});
+      isSelectedDroneTakenOver.current = takenOverDrones.includes(selectedDroneId);
+    }
+  }, [countermeasuresStatus, selectedDroneId]);
   
+  // Fetch status on mount and periodically
   useEffect(() => {
     fetchStatusData();
     
-    const interval = setInterval(fetchStatusData, 5000);
+    // Set up timer for periodic updates
+    statusUpdateTimerRef.current = setInterval(fetchStatusData, 5000);
     
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(statusUpdateTimerRef.current);
+      if (messageTimerRef.current) clearTimeout(messageTimerRef.current);
+    };
   }, [activeTab, apiBaseUrl]);
   
+  // Fetch vulnerabilities when selected drone changes
   useEffect(() => {
     if (selectedDroneId && activeTab === 'takeover') {
       fetchVulnerabilities();
@@ -106,9 +138,28 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
       isError
     });
     
-    setTimeout(() => {
+    if (messageTimerRef.current) {
+      clearTimeout(messageTimerRef.current);
+    }
+    
+    messageTimerRef.current = setTimeout(() => {
       setMessage(null);
     }, 3000);
+  };
+  
+  // ฟังก์ชันยืนยันการทำงาน
+  const confirmAndExecute = (action, confirmMessage) => {
+    setConfirmAction(() => action);
+    setConfirmDialogOpen(true);
+  };
+  
+  // ฟังก์ชันสำหรับการดำเนินการเมื่อกดยืนยัน
+  const handleConfirmAction = async () => {
+    setConfirmDialogOpen(false);
+    if (confirmAction) {
+      await confirmAction();
+      setConfirmAction(null);
+    }
   };
   
   const handleJamDrone = async () => {
@@ -117,30 +168,34 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
       return;
     }
     
-    setLoading(true);
-    
-    try {
-      const result = await jamDroneControl(
-        apiBaseUrl, 
-        selectedDroneId, 
-        jamGps, 
-        jamDuration, 
-        jamPower
-      );
+    const actionFunc = async () => {
+      setLoading(true);
       
-      if (result.status === 'success') {
-        showMessage(`Jamming drone ${selectedDroneId}`);
-        fetchStatusData();
-        refreshData();
-      } else {
-        showMessage(`Error: ${result.message}`, true);
+      try {
+        const result = await jamDroneControl(
+          apiBaseUrl, 
+          selectedDroneId, 
+          jamGps, 
+          jamDuration, 
+          jamPower
+        );
+        
+        if (result.status === 'success') {
+          showMessage(`Jamming drone ${selectedDroneId}`);
+          fetchStatusData();
+          refreshData();
+        } else {
+          showMessage(`Error: ${result.message}`, true);
+        }
+      } catch (error) {
+        console.error('Error jamming drone:', error);
+        showMessage(`Error: ${error.message}`, true);
+      } finally {
+        setLoading(false);
       }
-    } catch (error) {
-      console.error('Error jamming drone:', error);
-      showMessage(`Error: ${error.message}`, true);
-    } finally {
-      setLoading(false);
-    }
+    };
+    
+    confirmAndExecute(actionFunc, `Jam drone ${selectedDroneId}?`);
   };
   
   const handleDeactivateJammer = async (jammerId) => {
@@ -170,31 +225,35 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
       return;
     }
     
-    setLoading(true);
-    
-    try {
-      const result = await takeoverDrone(
-        apiBaseUrl,
-        selectedDroneId,
-        takeoverMethod,
-        takeoverCommand,
-        {},  // parameters
-        jamDuration
-      );
+    const actionFunc = async () => {
+      setLoading(true);
       
-      if (result.status === 'active') {
-        showMessage(`Taking over drone ${selectedDroneId}`);
-        fetchStatusData();
-        refreshData();
-      } else {
-        showMessage(`Error: ${result.message}`, true);
+      try {
+        const result = await takeoverDrone(
+          apiBaseUrl,
+          selectedDroneId,
+          takeoverMethod,
+          takeoverCommand,
+          {},  // parameters
+          jamDuration
+        );
+        
+        if (result.status === 'active') {
+          showMessage(`Taking over drone ${selectedDroneId}`);
+          fetchStatusData();
+          refreshData();
+        } else {
+          showMessage(`Error: ${result.message}`, true);
+        }
+      } catch (error) {
+        console.error('Error taking over drone:', error);
+        showMessage(`Error: ${error.message}`, true);
+      } finally {
+        setLoading(false);
       }
-    } catch (error) {
-      console.error('Error taking over drone:', error);
-      showMessage(`Error: ${error.message}`, true);
-    } finally {
-      setLoading(false);
-    }
+    };
+    
+    confirmAndExecute(actionFunc, `Take over drone ${selectedDroneId} using ${takeoverMethod}?`);
   };
   
   // Handle force landing
@@ -204,24 +263,28 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
       return;
     }
     
-    setLoading(true);
-    
-    try {
-      const result = await forceLanding(apiBaseUrl, selectedDroneId);
+    const actionFunc = async () => {
+      setLoading(true);
       
-      if (result.status === 'success') {
-        showMessage(`Forcing drone ${selectedDroneId} to land`);
-        fetchStatusData();
-        refreshData();
-      } else {
-        showMessage(`Error: ${result.message}`, true);
+      try {
+        const result = await forceLanding(apiBaseUrl, selectedDroneId);
+        
+        if (result.status === 'success') {
+          showMessage(`Forcing drone ${selectedDroneId} to land`);
+          fetchStatusData();
+          refreshData();
+        } else {
+          showMessage(`Error: ${result.message}`, true);
+        }
+      } catch (error) {
+        console.error('Error forcing landing:', error);
+        showMessage(`Error: ${error.message}`, true);
+      } finally {
+        setLoading(false);
       }
-    } catch (error) {
-      console.error('Error forcing landing:', error);
-      showMessage(`Error: ${error.message}`, true);
-    } finally {
-      setLoading(false);
-    }
+    };
+    
+    confirmAndExecute(actionFunc, `Force drone ${selectedDroneId} to land?`);
   };
   
   // Handle stopping takeover
@@ -258,55 +321,62 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
       return;
     }
     
-    setLoading(true);
-    
-    try {
-      const result = await captureDrone(
-        apiBaseUrl,
-        selectedDroneId,
-        captureMethod,
-        {}  // parameters
-      );
+    const actionFunc = async () => {
+      setLoading(true);
       
-      if (result.status === 'success' || result.status === 'deploying') {
-        showMessage(`Deploying ${captureMethod} to capture drone ${selectedDroneId}`);
-        fetchStatusData();
-        refreshData();
-      } else {
-        showMessage(`Error: ${result.message}`, true);
+      try {
+        const result = await captureDrone(
+          apiBaseUrl,
+          selectedDroneId,
+          captureMethod,
+          {}  // parameters
+        );
+        
+        if (result.status === 'success' || result.status === 'deploying') {
+          showMessage(`Deploying ${captureMethod} to capture drone ${selectedDroneId}`);
+          fetchStatusData();
+          refreshData();
+        } else {
+          showMessage(`Error: ${result.message}`, true);
+        }
+      } catch (error) {
+        console.error('Error capturing drone:', error);
+        showMessage(`Error: ${error.message}`, true);
+      } finally {
+        setLoading(false);
       }
-    } catch (error) {
-      console.error('Error capturing drone:', error);
-      showMessage(`Error: ${error.message}`, true);
-    } finally {
-      setLoading(false);
-    }
+    };
+    
+    confirmAndExecute(actionFunc, `Deploy ${captureMethod.replace('_', ' ')} to capture drone ${selectedDroneId}?`);
   };
   
   // Handle emergency jam all
   const handleEmergencyJamAll = async () => {
-    if (!window.confirm('This will activate maximum power jamming on all frequencies. Continue?')) {
-      return;
-    }
-    
-    setLoading(true);
-    
-    try {
-      const result = await emergencyJamAll(apiBaseUrl);
+    const actionFunc = async () => {
+      setLoading(true);
       
-      if (result.status === 'success') {
-        showMessage('Emergency jamming activated on all frequencies');
-        fetchStatusData();
-        refreshData();
-      } else {
-        showMessage(`Error: ${result.message}`, true);
+      try {
+        const result = await emergencyJamAll(apiBaseUrl);
+        
+        if (result.status === 'success') {
+          showMessage('Emergency jamming activated on all frequencies');
+          fetchStatusData();
+          refreshData();
+        } else {
+          showMessage(`Error: ${result.message}`, true);
+        }
+      } catch (error) {
+        console.error('Error activating emergency jam:', error);
+        showMessage(`Error: ${error.message}`, true);
+      } finally {
+        setLoading(false);
       }
-    } catch (error) {
-      console.error('Error activating emergency jam:', error);
-      showMessage(`Error: ${error.message}`, true);
-    } finally {
-      setLoading(false);
-    }
+    };
+    
+    confirmAndExecute(
+      actionFunc, 
+      'WARNING: This will activate maximum power jamming on ALL frequencies and may affect friendly drones. Continue?'
+    );
   };
   
   // Handle emergency stop all
@@ -361,27 +431,44 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
           const timeRemaining = jammer.duration ? jammer.duration - timeElapsed : null;
           
           return (
-            <div key={jammerId} className="bg-gray-100 p-3 rounded shadow-sm">
+            <div key={jammerId} className="bg-gray-800 p-3 rounded-lg shadow-sm border border-gray-700">
               <div className="flex justify-between items-start">
                 <div>
-                  <div className="font-medium text-sm">{jammerId}</div>
-                  <div className="text-xs text-gray-600 mt-1">
+                  <div className="font-medium text-sm text-blue-300">{jammerId}</div>
+                  <div className="text-xs text-gray-400 mt-1">
                     Frequencies: {frequencies.map(f => `${(f / 1e9).toFixed(1)} GHz`).join(', ')}
                   </div>
-                  <div className="text-xs text-gray-600">
+                  <div className="text-xs text-gray-400">
                     Power: {jammer.power_level}% | 
-                    {timeRemaining ? ` Time: ${formatTime(timeRemaining)}` : ' Continuous'}
+                    {timeRemaining ? (
+                      <span className={timeRemaining < 10 ? 'text-orange-400' : ''}>
+                        {' '}Time: {formatTime(timeRemaining)}
+                      </span>
+                    ) : ' Continuous'}
                   </div>
                 </div>
                 
                 <button
-                  className="bg-red-500 hover:bg-red-600 text-white text-xs py-1 px-2 rounded"
+                  className="bg-red-800 hover:bg-red-700 text-white text-xs py-1 px-2 rounded"
                   onClick={() => handleDeactivateJammer(jammerId)}
                   disabled={loading}
                 >
                   Stop
                 </button>
               </div>
+              
+              {/* Progress bar for remaining time */}
+              {timeRemaining && jammer.duration && (
+                <div className="mt-2 w-full bg-gray-700 rounded-full h-1.5 overflow-hidden">
+                  <div 
+                    className="bg-blue-500 h-1.5"
+                    style={{
+                      width: `${Math.max(0, (1 - timeElapsed / jammer.duration) * 100)}%`,
+                      transition: 'width 1s linear'
+                    }}
+                  ></div>
+                </div>
+              )}
             </div>
           );
         })}
@@ -394,7 +481,13 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
     if (loading) {
       return (
         <div className="text-gray-500 text-center py-4">
-          Scanning for vulnerabilities...
+          <div className="flex justify-center">
+            <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span>Scanning for vulnerabilities...</span>
+          </div>
         </div>
       );
     }
@@ -419,15 +512,21 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
       <div className="space-y-2 mt-4">
         <h3 className="text-sm font-semibold">Detected Vulnerabilities</h3>
         
-        {vulnerabilities.map((vuln, index) => (
-          <div key={index} className="bg-gray-100 p-2 rounded shadow-sm">
-            <div className="font-medium text-sm">{vuln.type}</div>
-            <div className="text-xs text-gray-600 mt-1">
-              Method: {vuln.method} | Confidence: {Math.round(vuln.confidence * 100)}%
+        {vulnerabilities.map((vuln, index) => {
+          const confidence = Math.round(vuln.confidence * 100);
+          const confidenceColor = confidence > 80 ? 'text-green-400' : confidence > 50 ? 'text-yellow-400' : 'text-red-400';
+          
+          return (
+            <div key={index} className="bg-gray-800 p-2 rounded-lg shadow-sm border border-gray-700">
+              <div className="font-medium text-sm text-blue-300">{vuln.type}</div>
+              <div className="text-xs text-gray-400 mt-1">
+                Method: <span className="text-purple-300">{vuln.method}</span> | 
+                Confidence: <span className={confidenceColor}>{confidence}%</span>
+              </div>
+              <div className="text-xs text-gray-400">{vuln.description}</div>
             </div>
-            <div className="text-xs text-gray-600">{vuln.description}</div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     );
   };
@@ -453,19 +552,42 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
           
           if (!status.available) return null;
           
+          // Calculate status color
+          const statusColor = status.ready ? 'text-green-400' : 'text-red-400';
+          
+          // Calculate battery level color if applicable
+          let batteryColor = 'bg-green-500';
+          if (status.battery_percent !== undefined) {
+            if (status.battery_percent < 30) batteryColor = 'bg-red-500';
+            else if (status.battery_percent < 70) batteryColor = 'bg-yellow-500';
+          }
+          
           return (
-            <div key={method} className="bg-gray-100 p-2 rounded shadow-sm">
-              <div className="flex items-center">
-                <div className={`w-2 h-2 rounded-full mr-2 ${status.ready ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                <div className="font-medium text-sm capitalize">{method.replace('_', ' ')}</div>
+            <div key={method} className="bg-gray-800 p-3 rounded-lg shadow-sm border border-gray-700">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center">
+                  <div className={`w-2 h-2 rounded-full mr-2 ${status.ready ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                  <div className="font-medium text-sm capitalize">{method.replace('_', ' ')}</div>
+                </div>
+                <div className="text-xs bg-gray-700 rounded px-2 py-0.5 uppercase tracking-wide font-medium">
+                  <span className={statusColor}>{status.status || (status.ready ? 'Ready' : 'Not Ready')}</span>
+                </div>
               </div>
               
-              <div className="grid grid-cols-2 gap-x-4 text-xs text-gray-600 mt-1">
-                <div>Status: {status.status || 'N/A'}</div>
+              <div className="grid grid-cols-2 gap-x-4 text-xs text-gray-400 mt-2">
                 <div>Range: {status.range_meters}m</div>
                 
                 {status.battery_percent !== undefined && (
-                  <div>Battery: {status.battery_percent}%</div>
+                  <div className="flex items-center">
+                    <span className="mr-2">Battery:</span>
+                    <div className="flex-grow h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                      <div 
+                        className={`h-1.5 ${batteryColor}`}
+                        style={{ width: `${status.battery_percent}%` }}
+                      ></div>
+                    </div>
+                    <span className="ml-1">{status.battery_percent}%</span>
+                  </div>
                 )}
                 
                 {status.ammo_count !== undefined && (
@@ -479,49 +601,77 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
     );
   };
   
+  // Get style for drone status indicator
+  const getDroneStatusIndicator = () => {
+    if (!selectedDroneId) return null;
+    
+    let statusText = "No active countermeasures";
+    let statusColor = "bg-gray-500";
+    
+    if (isSelectedDroneJammed.current) {
+      statusText = "Jamming Active";
+      statusColor = "bg-red-500";
+    } else if (isSelectedDroneTakenOver.current) {
+      statusText = "Control Active";
+      statusColor = "bg-purple-500";
+    }
+    
+    return (
+      <div className="flex items-center mt-1">
+        <div className={`w-2 h-2 rounded-full mr-1 ${statusColor} ${isSelectedDroneJammed.current || isSelectedDroneTakenOver.current ? 'animate-pulse' : ''}`}></div>
+        <span className="text-xs text-gray-400">{statusText}</span>
+      </div>
+    );
+  };
+  
   return (
-    <div className="bg-white rounded-lg shadow h-full flex flex-col">
-      <div className="bg-gray-800 text-white p-3 flex justify-between items-center">
+    <div className="bg-gray-900 text-white h-full flex flex-col">
+      <div className="bg-gray-800 p-3 flex justify-between items-center border-b border-gray-700">
         <h2 className="text-lg font-bold">Countermeasures</h2>
         
         {/* Selected drone indicator */}
-        {selectedDroneId ? (
-          <div className="text-sm">
-            Target: <span className="font-semibold">#{selectedDroneId}</span>
-            {selectedDrone && (
-              <span className="ml-1 text-xs">
-                ({selectedDrone.type})
-              </span>
-            )}
-          </div>
-        ) : (
-          <div className="text-sm text-gray-400">No target selected</div>
-        )}
+        <div>
+          {selectedDroneId ? (
+            <div>
+              <div className="text-sm">
+                Target: <span className="font-semibold text-blue-300">#{selectedDroneId}</span>
+                {selectedDrone && (
+                  <span className="ml-1 text-xs text-gray-400">
+                    ({selectedDrone.type})
+                  </span>
+                )}
+              </div>
+              {getDroneStatusIndicator()}
+            </div>
+          ) : (
+            <div className="text-sm text-gray-400">No target selected</div>
+          )}
+        </div>
       </div>
       
       {/* Tab navigation */}
-      <div className="bg-gray-100 flex border-b">
+      <div className="bg-gray-800 flex border-b border-gray-700">
         <button
-          className={`px-4 py-2 text-sm font-medium ${activeTab === 'jam' ? 'bg-white text-blue-600 border-b-2 border-blue-500' : 'text-gray-600 hover:text-gray-800'}`}
+          className={`px-4 py-2 text-sm font-medium ${activeTab === 'jam' ? 'bg-gray-900 text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-200'}`}
           onClick={() => setActiveTab('jam')}
         >
           RF Jamming
         </button>
         <button
-          className={`px-4 py-2 text-sm font-medium ${activeTab === 'takeover' ? 'bg-white text-blue-600 border-b-2 border-blue-500' : 'text-gray-600 hover:text-gray-800'}`}
+          className={`px-4 py-2 text-sm font-medium ${activeTab === 'takeover' ? 'bg-gray-900 text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-200'}`}
           onClick={() => setActiveTab('takeover')}
         >
           Takeover
         </button>
         <button
-          className={`px-4 py-2 text-sm font-medium ${activeTab === 'physical' ? 'bg-white text-blue-600 border-b-2 border-blue-500' : 'text-gray-600 hover:text-gray-800'}`}
+          className={`px-4 py-2 text-sm font-medium ${activeTab === 'physical' ? 'bg-gray-900 text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-200'}`}
           onClick={() => setActiveTab('physical')}
         >
           Physical
         </button>
       </div>
       
-      <div className="p-4 overflow-y-auto flex-grow">
+      <div className="p-4 overflow-y-auto flex-grow bg-gray-900">
         {/* RF Jamming Tab */}
         {activeTab === 'jam' && (
           <div>
@@ -530,22 +680,27 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
             <div className="space-y-3">
               {/* Power Level */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-gray-300 mb-1">
                   Power Level: {jamPower}%
                 </label>
                 <input
                   type="range"
                   min="10"
                   max="100"
-                  className="w-full"
+                  className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
                   value={jamPower}
                   onChange={(e) => setJamPower(parseInt(e.target.value))}
                 />
+                <div className="flex justify-between text-xs text-gray-500 mt-1">
+                  <span>Low</span>
+                  <span>Medium</span>
+                  <span>High</span>
+                </div>
               </div>
               
               {/* Duration */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-gray-300 mb-1">
                   Duration: {jamDuration} seconds
                 </label>
                 <input
@@ -553,46 +708,63 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
                   min="5"
                   max="120"
                   step="5"
-                  className="w-full"
+                  className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
                   value={jamDuration}
                   onChange={(e) => setJamDuration(parseInt(e.target.value))}
                 />
+                <div className="flex justify-between text-xs text-gray-500 mt-1">
+                  <span>5s</span>
+                  <span>60s</span>
+                  <span>120s</span>
+                </div>
               </div>
               
               {/* GPS Jamming */}
-              <div className="flex items-center">
+              <div className="flex items-center p-2 bg-gray-800 rounded-lg">
                 <input
                   type="checkbox"
                   id="jam-gps"
-                  className="mr-2"
+                  className="mr-2 h-4 w-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-gray-800"
                   checked={jamGps}
                   onChange={(e) => setJamGps(e.target.checked)}
                 />
-                <label htmlFor="jam-gps" className="text-sm font-medium text-gray-700">
+                <label htmlFor="jam-gps" className="text-sm font-medium text-gray-300">
                   Also jam GPS signals
                 </label>
               </div>
               
               {/* Jam Button */}
               <button
-                className="w-full bg-red-500 hover:bg-red-600 text-white py-2 px-4 rounded disabled:bg-red-300"
+                className={`w-full py-2 px-4 rounded font-medium ${
+                  loading ? 'bg-gray-600 cursor-not-allowed' :
+                  isSelectedDroneJammed.current ? 'bg-red-700 hover:bg-red-600' :
+                  'bg-red-600 hover:bg-red-500'
+                } ${!selectedDroneId ? 'opacity-50 cursor-not-allowed' : ''} transition-colors`}
                 onClick={handleJamDrone}
                 disabled={loading || !selectedDroneId}
               >
-                {loading ? 'Processing...' : 'Jam Drone Control'}
+                {loading ? (
+                  <div className="flex items-center justify-center">
+                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Processing...
+                  </div>
+                ) : isSelectedDroneJammed.current ? 'Update Jamming' : 'Jam Drone Control'}
               </button>
               
               {/* Emergency Buttons */}
               <div className="grid grid-cols-2 gap-2 mt-4">
                 <button
-                  className="bg-orange-500 hover:bg-orange-600 text-white py-2 px-4 rounded text-sm"
+                  className="bg-orange-700 hover:bg-orange-600 text-white py-2 px-4 rounded text-sm font-medium disabled:bg-orange-900 disabled:cursor-not-allowed transition-colors"
                   onClick={handleEmergencyJamAll}
                   disabled={loading}
                 >
                   Emergency Jam All
                 </button>
                 <button
-                  className="bg-gray-500 hover:bg-gray-600 text-white py-2 px-4 rounded text-sm"
+                  className="bg-gray-700 hover:bg-gray-600 text-white py-2 px-4 rounded text-sm font-medium disabled:bg-gray-800 disabled:cursor-not-allowed transition-colors"
                   onClick={handleEmergencyStopAll}
                   disabled={loading}
                 >
@@ -614,11 +786,11 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
             <div className="space-y-3">
               {/* Method Selection */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-gray-300 mb-1">
                   Takeover Method
                 </label>
                 <select
-                  className="w-full border rounded px-3 py-2 text-sm"
+                  className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-white"
                   value={takeoverMethod}
                   onChange={(e) => setTakeoverMethod(e.target.value)}
                 >
@@ -631,11 +803,11 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
               
               {/* Command Selection */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-gray-300 mb-1">
                   Command
                 </label>
                 <select
-                  className="w-full border rounded px-3 py-2 text-sm"
+                  className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-white"
                   value={takeoverCommand}
                   onChange={(e) => setTakeoverCommand(e.target.value)}
                 >
@@ -650,7 +822,7 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
               
               {/* Duration */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-gray-300 mb-1">
                   Duration: {jamDuration} seconds
                 </label>
                 <input
@@ -658,7 +830,7 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
                   min="5"
                   max="120"
                   step="5"
-                  className="w-full"
+                  className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
                   value={jamDuration}
                   onChange={(e) => setJamDuration(parseInt(e.target.value))}
                 />
@@ -667,14 +839,20 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
               {/* Takeover Buttons */}
               <div className="grid grid-cols-2 gap-2">
                 <button
-                  className="bg-purple-500 hover:bg-purple-600 text-white py-2 px-4 rounded disabled:bg-purple-300"
+                  className={`py-2 px-4 rounded font-medium ${
+                    loading ? 'bg-gray-600 cursor-not-allowed' :
+                    isSelectedDroneTakenOver.current ? 'bg-purple-700 hover:bg-purple-600' :
+                    'bg-purple-600 hover:bg-purple-500'
+                  } ${!selectedDroneId ? 'opacity-50 cursor-not-allowed' : ''} transition-colors`}
                   onClick={handleTakeoverDrone}
                   disabled={loading || !selectedDroneId}
                 >
-                  {loading ? 'Processing...' : 'Take Control'}
+                  {isSelectedDroneTakenOver.current ? 'Update Control' : 'Take Control'}
                 </button>
                 <button
-                  className="bg-red-500 hover:bg-red-600 text-white py-2 px-4 rounded disabled:bg-red-300"
+                  className={`py-2 px-4 rounded font-medium ${
+                    loading ? 'bg-gray-600 cursor-not-allowed' : 'bg-red-600 hover:bg-red-500'
+                  } ${!selectedDroneId ? 'opacity-50 cursor-not-allowed' : ''} transition-colors`}
                   onClick={handleForceLanding}
                   disabled={loading || !selectedDroneId}
                 >
@@ -684,9 +862,11 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
               
               {/* Stop Button */}
               <button
-                className="w-full bg-gray-500 hover:bg-gray-600 text-white py-2 px-4 rounded disabled:bg-gray-300"
+                className={`w-full py-2 px-4 rounded font-medium ${
+                  loading ? 'bg-gray-600 cursor-not-allowed' : 'bg-gray-700 hover:bg-gray-600'
+                } ${!selectedDroneId || !isSelectedDroneTakenOver.current ? 'opacity-50 cursor-not-allowed' : ''} transition-colors`}
                 onClick={handleStopTakeover}
-                disabled={loading || !selectedDroneId}
+                disabled={loading || !selectedDroneId || !isSelectedDroneTakenOver.current}
               >
                 Stop Takeover
               </button>
@@ -705,11 +885,11 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
             <div className="space-y-3">
               {/* Method Selection */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-gray-300 mb-1">
                   Capture Method
                 </label>
                 <select
-                  className="w-full border rounded px-3 py-2 text-sm"
+                  className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-white"
                   value={captureMethod}
                   onChange={(e) => setCaptureMethod(e.target.value)}
                 >
@@ -722,12 +902,24 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
               
               {/* Deploy Button */}
               <button
-                className="w-full bg-green-500 hover:bg-green-600 text-white py-2 px-4 rounded disabled:bg-green-300"
+                className={`w-full py-2 px-4 rounded font-medium ${
+                  loading ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-600 hover:bg-green-500'
+                } ${!selectedDroneId ? 'opacity-50 cursor-not-allowed' : ''} transition-colors`}
                 onClick={handleCaptureDrone}
                 disabled={loading || !selectedDroneId}
               >
                 {loading ? 'Deploying...' : 'Deploy Countermeasure'}
               </button>
+              
+              {/* Help text */}
+              <div className="text-xs text-gray-500 p-2 bg-gray-800 rounded-lg">
+                <p className="mb-1">
+                  <span className="text-yellow-400">Warning:</span> Physical countermeasures require line of sight and close proximity to target drone.
+                </p>
+                <p>
+                  Equipment must be in "Ready" state to deploy.
+                </p>
+              </div>
             </div>
             
             {/* Equipment Status */}
@@ -738,8 +930,34 @@ const CountermeasurePanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
       
       {/* Status message */}
       {message && (
-        <div className={`p-3 ${message.isError ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'}`}>
+        <div className={`p-3 ${message.isError ? 'bg-red-900 text-red-300' : 'bg-green-900 text-green-300'} border-t border-gray-700`}>
           {message.text}
+        </div>
+      )}
+      
+      {/* Confirmation Dialog */}
+      {confirmDialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70">
+          <div className="bg-gray-800 rounded-lg shadow-lg max-w-md w-full p-6 border border-gray-700">
+            <h3 className="text-lg font-bold text-white mb-4">Confirm Action</h3>
+            <p className="text-gray-300 mb-6">
+              Are you sure you want to proceed with this action?
+            </p>
+            <div className="flex justify-end space-x-3">
+              <button
+                className="px-4 py-2 rounded bg-gray-700 hover:bg-gray-600 text-white font-medium"
+                onClick={() => setConfirmDialogOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-4 py-2 rounded bg-red-600 hover:bg-red-500 text-white font-medium"
+                onClick={handleConfirmAction}
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
