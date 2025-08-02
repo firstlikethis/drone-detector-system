@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional, Tuple
 
 from app.core.models import Drone, Alert, ThreatLevel, AlertType, GeoPoint
 from app.api.websocket import broadcast_alert
+from app.core.globals import connection_manager
 
 logger = logging.getLogger(__name__)
 
@@ -70,12 +71,16 @@ class DroneService:
                     f"{drone.threat_level.value} -> {threat_level.value}"
                 )
                 
-                # Broadcast the alert (if this is being called from a context where 
                 # it makes sense to broadcast)
                 try:
-                    alert_dict = alert.dict()
-                    alert_dict["timestamp"] = alert.timestamp.isoformat()
-                    await broadcast_alert(alert_dict)
+                    # Verify there are active connections before attempting to broadcast
+                    if connection_manager.active_connections:
+                        alert_dict = alert.dict()
+                        alert_dict["timestamp"] = alert.timestamp.isoformat()
+                        await connection_manager.broadcast({
+                            "type": "alert",
+                            "data": alert_dict
+                        })
                 except Exception as e:
                     logger.error(f"Error broadcasting alert: {e}")
             
