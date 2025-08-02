@@ -88,12 +88,19 @@ const DroneList = () => {
     return `${speed.toFixed(1)} m/s`;
   };
   
-  // Format timestamp
   const formatTime = (timestamp) => {
-    if (!timestamp) return '';
+    if (!timestamp) return 'N/A';
     
-    const date = new Date(timestamp);
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    try {
+      const date = new Date(timestamp);
+      if (isNaN(date.getTime())) {
+        return 'Invalid';
+      }
+      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    } catch (error) {
+      console.error('Error formatting timestamp:', error);
+      return 'Error';
+    }
   };
   
   // Render sort indicator

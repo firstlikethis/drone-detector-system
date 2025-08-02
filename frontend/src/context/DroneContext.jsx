@@ -53,10 +53,22 @@ export const DroneProvider = ({ children, apiBaseUrl = 'http://localhost:8000', 
         return [alertData, ...prevAlerts];
       });
       
-      // Play alert sound if available
-      const alertSound = document.getElementById('alert-sound');
-      if (alertSound) {
-        alertSound.play().catch(err => console.warn('Could not play alert sound', err));
+      try {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        
+        oscillator.type = 'sine';
+        oscillator.frequency.value = 770;
+        gainNode.gain.value = 0.1;
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        oscillator.start();
+        setTimeout(() => oscillator.stop(), 200);
+      } catch (err) {
+        console.warn('Could not play alert sound', err);
       }
     });
 
@@ -175,16 +187,11 @@ export const DroneProvider = ({ children, apiBaseUrl = 'http://localhost:8000', 
 
   return (
     <DroneContext.Provider value={value}>
-      {/* Hidden audio element for alert sounds */}
-      <audio id="alert-sound" preload="auto">
-        <source src="/alert.mp3" type="audio/mpeg" />
-      </audio>
       {children}
     </DroneContext.Provider>
   );
 };
 
-// Custom hook for using drone context
 export const useDroneContext = () => {
   const context = useContext(DroneContext);
   if (!context) {

@@ -11,7 +11,7 @@ class DroneWebSocketClient {
     this.socket = null;
     this.isConnected = false;
     this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 5;
+    this.maxReconnectAttempts = 10; // Increased from 5
     this.reconnectTimeout = null;
     this.reconnectDelay = 1000; // Start with 1 second
     this.handlers = {
@@ -147,16 +147,32 @@ class DroneWebSocketClient {
   }
 
   _handleClose(event) {
+    const wasConnected = this.isConnected;
     console.log(`WebSocket disconnected: ${event.code} ${event.reason}`);
     this.isConnected = false;
     this._clearPingInterval();
     this._notifyHandlers('connection', { connected: false });
-    this._scheduleReconnect();
+    
+    // Only attempt to reconnect if we were previously connected
+    // or if we're still in the initial connection attempts
+    if (wasConnected || this.reconnectAttempts < this.maxReconnectAttempts) {
+      this._scheduleReconnect();
+    }
   }
 
   _handleError(error) {
     console.error('WebSocket error:', error);
     this._notifyHandlers('error', error);
+    
+    // If we get an error and the socket is still in CONNECTING state,
+    // force close it so the onclose handler will run and trigger reconnect
+    if (this.socket && this.socket.readyState === WebSocket.CONNECTING) {
+      try {
+        this.socket.close();
+      } catch (e) {
+        // Ignore errors when closing
+      }
+    }
   }
 
   _handleMessage(event) {
@@ -170,6 +186,10 @@ class DroneWebSocketClient {
           break;
         case 'alert':
           this._notifyHandlers('alerts', message.data);
+          break;
+        case 'system_status':
+          // Handle system status updates if needed
+          console.log('System status update received:', message.data);
           break;
         default:
           console.log('Unknown message type:', message.type);
@@ -199,7 +219,12 @@ class DroneWebSocketClient {
       return;
     }
 
-    const delay = this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts);
+    // Use exponential backoff with a maximum delay of 30 seconds
+    const delay = Math.min(
+      30000, // 30 seconds max
+      this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts)
+    );
+    
     console.log(`Scheduling reconnect in ${delay}ms (attempt ${this.reconnectAttempts + 1}/${this.maxReconnectAttempts})`);
 
     this.reconnectTimeout = setTimeout(() => {
@@ -209,9 +234,16 @@ class DroneWebSocketClient {
   }
 
   _startPingInterval() {
+    // Clear any existing interval first
+    this._clearPingInterval();
+    
     this.pingInterval = setInterval(() => {
       if (this.isConnected) {
+        // Simple ping message to keep the connection alive
         this.send({ type: 'ping' });
+      } else {
+        // If we're not connected, stop pinging
+        this._clearPingInterval();
       }
     }, 30000); // 30 seconds
   }

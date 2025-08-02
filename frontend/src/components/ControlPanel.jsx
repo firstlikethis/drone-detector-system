@@ -85,8 +85,11 @@ const ControlPanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
     }
   };
   
-  // Handle resetting simulator
   const handleResetSimulator = async () => {
+    if (isUpdating) {
+      return;
+    }
+    
     if (!window.confirm('Are you sure you want to reset the simulator? This will clear all drones and alerts.')) {
       return;
     }
@@ -96,7 +99,9 @@ const ControlPanel = ({ apiBaseUrl = 'http://localhost:8000' }) => {
     try {
       await resetSimulator(apiBaseUrl);
       showMessage('Simulator reset successfully');
-      refreshData();
+      setTimeout(() => {
+        refreshData();
+      }, 500);
     } catch (error) {
       console.error('Error resetting simulator:', error);
       showMessage(`Error: ${error.message}`, true);

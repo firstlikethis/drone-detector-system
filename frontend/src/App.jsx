@@ -4,6 +4,7 @@ import DroneMap from './components/DroneMap';
 import DroneList from './components/DroneList';
 import AlertPanel from './components/AlertPanel';
 import ControlPanel from './components/ControlPanel';
+import RadarDisplay from './components/RadarDisplay';
 
 // Configuration
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -12,6 +13,7 @@ const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws/drones';
 function App() {
   const [layout, setLayout] = useState('default'); // 'default', 'map-focus', 'data-focus'
   const [followSelected, setFollowSelected] = useState(false);
+  const [showRadar, setShowRadar] = useState(false); // Toggle for radar display
 
   // Handle layout changes
   const toggleLayout = (newLayout) => {
@@ -94,6 +96,13 @@ function App() {
               >
                 {followSelected ? 'Following Drone' : 'Follow Drone'}
               </button>
+              <button 
+                className={`px-3 py-1 rounded text-sm ${showRadar ? 'bg-purple-600' : 'bg-gray-600 hover:bg-gray-500'}`}
+                onClick={() => setShowRadar(!showRadar)}
+                title="Toggle radar display"
+              >
+                {showRadar ? 'Hide Radar' : 'Show Radar'}
+              </button>
             </div>
           </div>
         </header>
@@ -101,9 +110,9 @@ function App() {
         {/* Main Content */}
         <main className="container mx-auto px-4 py-6 flex-grow">
           <div className="grid grid-cols-12 gap-4 h-[calc(100vh-8rem)]">
-            {/* Map Panel */}
+            {/* Map/Radar Panel */}
             <div className={`${layoutClasses.map} bg-white rounded-lg shadow overflow-hidden`}>
-              <DroneMap followSelected={followSelected} />
+              {showRadar ? <RadarDisplay /> : <DroneMap followSelected={followSelected} />}
             </div>
             
             {/* Drone List Panel */}
